@@ -33,7 +33,8 @@ pnpm dev
 | `index.html` | 日本語ページ、viewportとReferer方針、Reactの起動点 |
 | `src/main.tsx` | Reactをマウント。StrictModeでライフサイクルの問題も検出 |
 | `src/App.tsx` | ヘッダー、Worker疎通表示、動画フィード、3タブの外枠 |
-| `src/videos.ts` | テスト動画3本の内部UUID・YouTube ID・独自説明ラベル |
+| `src/videos.ts` | Shorts 3本の内部UUID・URL/ID・独自説明ラベルを一元管理 |
+| `src/player/youtubeUrl.ts` | Shorts/watch/短縮/embed URLまたは生IDから動画IDを抽出。実在・埋め込み可否は判定しない |
 | `src/VideoFeed.tsx` | 可視領域の測定、activeの更新、現在±1件のマウント、前後操作 |
 | `src/player/visibility.ts` | 可視面積率、active選択、マウント範囲を決める純粋関数 |
 | `src/player/PlaybackCoordinator.ts` | 再生対象を一元管理し、他のプレーヤーを停止 |
@@ -96,6 +97,6 @@ Phase 1は最大5件程度の固定データを想定し、カード全件を測
 
 ## テストと引き継ぎ
 
-現在の13テストは、表示率・ロード範囲、再生停止順序、遅延イベント、タブ非表示、StrictMode、DOM接続中の破棄、エラー/再試行、Workerレスポンスを確認します。実際のYouTube通信をモックするテストもあるため、端末固有の再生やタッチ挙動は保証しません。
+現在の37テストは、表示率・ロード範囲、再生停止順序、遅延イベント、タブ非表示、StrictMode、DOM接続中の破棄、エラー/再試行、Workerレスポンス、URL/ID抽出と固定データを確認します。実際のYouTube通信をモックするテストもあるため、端末固有の再生やタッチ挙動は保証しません。
 
-共有後は[READMEの実機チェックリスト](../README.md#未完了の手動実機チェック)を使ってiPhone Safariを確認してください。実施日・端末・OS・結果を残し、未検証のまま完了扱いにしないことが引き継ぎ事項です。
+共有後は[Phase 1.5の変更点・実機チェック](PHASE1_5_SHORTS.md)を使ってiPhone Safariを確認してください。実施日・端末・OS・結果を残し、旧横動画版の実機結果と今回のShorts版を混同しないことが引き継ぎ事項です。

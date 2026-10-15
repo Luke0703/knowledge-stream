@@ -19,7 +19,7 @@ export default function App() {
   }, [])
 
   return <div className="app-shell">
-    <header className="app-header"><div><p className="eyebrow">PLAYER SPIKE · PHASE 01</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{apiStatus}</span></header>
+    <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{apiStatus}</span></header>
     <VideoFeed videos={testVideos} />
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current="page">▶ <span>動画</span></button>

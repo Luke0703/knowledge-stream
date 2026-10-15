@@ -5,7 +5,9 @@
 **完成目標: 2026-10-20**
 
 ## 現在の状態
-**Phase 1 / Issue #1 の技術スパイクを実装。2026-10-15、同じWi-FiのiPhone Safariで画面表示・動画再生・前後切り替え・前の音声停止・標準UIでのミュート解除を利用者が確認済み。全受け入れ項目の確認は未完了です。**
+**Phase 1 / Issue #1 の追加検証としてPhase 1.5を実装。実際のYouTube Shorts 3本と9:16中心の表示に変更し、PCで埋め込み再生を確認しました。Shorts版のiPhone Safari実機確認は未完了です。**
+
+旧Phase 1の横動画では、2026-10-15に利用者がiPhone Safariで再生・前後操作・音声停止・スワイプ・横向き表示を確認済みです。この結果を今回のShorts版へ引き継いで合格扱いにはしません。[Phase 1.5の変更点と実機チェック](docs/PHASE1_5_SHORTS.md)を参照してください。
 
 固定の3動画を公式YouTube IFrame Player APIで表示します。検索・プロフィールは非活性タブの配置のみ。D1、管理画面、評価・検索・フィードAPI、履歴保存、ジャンル選択は実装していません。本番デプロイ・Cloudflareアカウント操作・秘密情報の登録は実施していません。
 
@@ -51,38 +53,38 @@ pnpm dev
 
 ## テスト動画と差し替え
 
-`src/videos.ts`の固定データです。ラベルは独自説明であり、YouTube公式タイトルではありません。短尺・縦動画に限定したコンテンツ選定はまだ行っておらず、横動画を含む再生検証用です。
+`src/videos.ts`の`videoSources`に3本を集約しています。`source`へShorts URLまたは11文字の動画IDを指定すると、`youtubeUrl.ts`がプレーヤー用IDへ変換します。ラベルは独自説明であり、YouTube公式タイトルではありません。正式コンテンツ選定ではなく、縦型の技術検証用です。
 
 | URL | 用途 | 2026-10-15の確認 |
 | --- | --- | --- |
-| https://www.youtube.com/watch?v=M7lc1UVf-VE | Googleの埋め込みプレーヤー解説・公式APIサンプル | 公開ページとPC内蔵ブラウザでの埋め込み再生を確認 |
-| https://www.youtube.com/watch?v=aqz-KE-bpKQ | Blender制作映像・横動画の表示確認 | 公開ページとPC内蔵ブラウザでの埋め込み再生を確認 |
-| https://www.youtube.com/watch?v=jNQXAC9IVRw | 動画共有の初期例・短い動画 | 公開ページとPC内蔵ブラウザでの埋め込み再生を確認 |
+| https://www.youtube.com/shorts/pgGrQjYcm5A | Explaining Pi With Pizza / Veritasium | Shorts公開ページ・PC内蔵ブラウザの埋め込み実再生を確認 |
+| https://www.youtube.com/shorts/uDeQB9OkoXY | World's Roundest Object / Veritasium | Shorts公開ページ・PC内蔵ブラウザの埋め込み実再生を確認 |
+| https://www.youtube.com/shorts/Ko02mUWhItA | Raindrops aren't shaped like raindrops / Veritasium | Shorts公開ページ・PC内蔵ブラウザの埋め込み実再生を確認 |
 
-地域・端末・年齢・配信者の設定変更で再生可否は変化します。iPhoneでの可用性は未確認。oEmbed取得は調査環境で失敗したため可否判定には使用せず、ローカルアプリ内の実再生で確認しました。
+地域・端末・年齢・配信者の設定変更で再生可否は変化します。Shorts版のiPhoneでの可用性は未確認です。URLからIDを抽出できることは、実在・Shorts・埋め込み可の証明にはなりません。上記はローカルアプリ内の実再生で確認しました。
 
 再生できなくなった場合:
 
 1. 所有者が埋め込みを許可した公開動画をYouTubeの「共有→埋め込む」で確認する。
-2. `src/videos.ts`の`externalVideoId`をURLの`v=`または`youtu.be/`の11文字IDへ変更し、独自`label`と`category`を更新。内部`id`はYouTube IDと別のUUID v4とし、別動画への差し替えなら新規UUIDを割り当てる。固定データは3〜5本に保つ。
+2. `src/videos.ts`の`source`をShorts URLまたは11文字IDへ変更し、独自`label`と`category`を更新。`watch?v=`・`youtu.be/`・`embed/`のURLも抽出可能です。内部`id`はYouTube IDと別のUUID v4とし、別動画への差し替えなら新規UUIDを割り当てる。今回の検証データは3本です。変換後の`externalVideoId`を別ファイルで二重管理しないでください。
 3. ローカルアプリで実際に再生し、前後操作、YouTube標準UI、iPhone Safariでも確認。公開ページやサムネイルが取得できただけでは埋め込み可と判断しない。
 4. エラー100は削除/非公開等、101/150は埋め込み不可、153はReferer等の再生元識別を確認。自動再生拒否は動画無効と扱わない。`file://`で開かずHTTP(S)を使用する。
 
 公式参考: [IFrame API](https://developers.google.com/youtube/iframe_api_reference)、[埋め込み要件](https://developers.google.com/youtube/terms/required-minimum-functionality)。`controls=1`、`playsinline=1`、実際の`origin`を設定し、Refererを抑制しない設定にしています。
 
-## 検証結果（2026-10-15）
+## Phase 1.5の検証結果（2026-10-15）
 
 - `pnpm typecheck`: 成功（React / Worker / Vite設定）。
 - `pnpm build`: 成功。`dist/client`と`dist/worker`を生成。ログの権限エラーは上記の作業フォルダ設定で解消。
-- `pnpm test`: 3ファイル、13テスト成功。閾値/ロード範囲、停止順序、遅延ready、非active再生、非表示タブ、StrictModeの生成破棄、ブロック案内、再試行/タイムアウト、API応答を検証。YouTubeをモックしたテストは実機再生の保証ではありません。
+- `pnpm test`: 4ファイル、37テスト成功。既存の13件（閾値/ロード範囲、停止順序、遅延ready、非active再生、非表示タブ、StrictModeの生成破棄、ブロック案内、再試行/タイムアウト、API応答）に、URL/ID抽出・不正URL拒否・固定データの24件を追加。YouTubeをモックしたテストは実機再生の保証ではありません。
 - ローカルworkerd起動・ビルド済みpreview: 成功。SPA 200、health 200、未実装のadmin/feedback APIはJSON 404（HTMLを要求してもSPAへ落ちない）、healthへのPOSTは405。
-- PC内蔵ブラウザ: 3動画の再生、前→次の旧動画停止、iframe数2→3→2、最後の次ボタン非活性を確認。
-- 390×844と320×568のブラウザ表示幅でレイアウトを確認。320px幅でもプレーヤー200×200px以上、前後操作・タブと非重複。小さい高さではヘッダーを含むページスクロールが発生する設計。
+- PC内蔵ブラウザ: Shorts 3本の実再生、次への切り替え時の旧動画一時停止表示、iframe数2→3→2、最後の次ボタン非活性を確認。
+- 390×844でプレーヤー約243×432px（9:16）、320×568で200×208px、844×390で200×206pxを確認。外側の操作・タブとは非重複。小さい高さでは最低200×200pxを優先し、縦動画は公式プレーヤー内に余白を伴って表示されます。ページ全体をスクロールして下部操作へ到達する設計です。
 - 制限付き実行環境での初回Vitestは子プロセス起動がタイムアウト。通常のローカル実行権限で再実行し13件成功。テストを省略して成功扱いにはしていません。
 
-## 未完了の手動・実機チェック
+## 旧Phase 1の手動・実機チェック記録
 
-**iPhone Safari実機（一部利用者確認済み、残りは下記）**。画面表示・再生・前後操作・前の音声停止・ミュート解除は確認済みです。PCのモバイル幅表示は実機確認の代替になりません。PCで`pnpm build`→`pnpm preview:lan`を実行し、同じWi-FiのiPhoneからPCのIP:4174を開きます。[接続・停止・トラブル対処と実機記録シート](docs/IPHONE_SAFARI_QA.md)を参照してください。外部公開やファイアウォール設定の自動変更は行いません。
+**下記の確認済み項目は旧横動画版の記録です。Shorts版は[新しい実機チェック](docs/PHASE1_5_SHORTS.md#iphone-safariで確認する項目)で再確認してください。** PCのモバイル幅表示は実機確認の代替になりません。PCで`pnpm build`→`pnpm preview:lan`を実行し、同じWi-FiのiPhoneからPCのIP:4174を開きます。[接続・停止・トラブル対処と実機記録シート](docs/IPHONE_SAFARI_QA.md)を参照してください。外部公開やファイアウォール設定の自動変更は行いません。
 
 - [x] 今回のiPhone Safariで、動画内・動画外の上下スワイプの両方で動画が切り替わり、目立った差がないことを利用者が確認（2026-10-15）。端末差に備えiframe外の前/次操作も維持。
 - [ ] 初回アクセス・低電力モード等で自動再生拒否時も標準再生ボタンが機能し、ミュート解除・一時停止・シークができること。
@@ -97,6 +99,7 @@ pnpm dev
 次の手順はDraft PRのレビューと上記実機チェック。Phase 2以降は別依頼として着手します。
 
 ## 開発ドキュメント
+- [Phase 1.5 Shortsのコード変更・検証記録](docs/PHASE1_5_SHORTS.md)
 - [iPhone Safari・同じWi-Fiでの検証手順](docs/IPHONE_SAFARI_QA.md)
 - [Phase 1 コードガイド・共有／復元手順](docs/PHASE1_CODE_GUIDE.md)
 - [プロトタイプ仕様書 v0.2](docs/SPEC.md)
