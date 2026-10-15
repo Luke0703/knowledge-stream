@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { TestVideo } from '../videos'
 import type { PlaybackCoordinator } from './PlaybackCoordinator'
 import { loadYouTubeApi } from './youtubeApi'
@@ -22,7 +22,8 @@ export function YouTubePlayer({ video, index, coordinator }: {
   const [status, setStatus] = useState('YouTubeを読み込み中…')
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  // Cleanup must run before React detaches the host; YouTube requires a live iframe.
+  useLayoutEffect(() => {
     let cancelled = false
     let player: YT.Player | undefined
     let registered = false

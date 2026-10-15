@@ -14,7 +14,10 @@ class FakePlayer {
   pauseVideo = vi.fn()
   playVideo = vi.fn()
   mute = vi.fn()
-  destroy = vi.fn(() => this.iframe.remove())
+  destroy = vi.fn(() => {
+    expect(this.iframe.isConnected).toBe(true)
+    this.iframe.remove()
+  })
   getIframe = () => this.iframe
   constructor(element: HTMLElement, options: YT.PlayerOptions) {
     this.options = options; element.replaceWith(this.iframe); instances.push(this)
