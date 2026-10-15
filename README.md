@@ -5,7 +5,7 @@
 **完成目標: 2026-10-20**
 
 ## 現在の状態
-**Phase 1 / Issue #1 の技術スパイクを実装。iPhone Safari実機の受け入れ確認は未完了です。**
+**Phase 1 / Issue #1 の技術スパイクを実装。2026-10-15、同じWi-FiのiPhone Safariで画面表示・動画再生を利用者が確認済み。全受け入れ項目の確認は未完了です。**
 
 固定の3動画を公式YouTube IFrame Player APIで表示します。検索・プロフィールは非活性タブの配置のみ。D1、管理画面、評価・検索・フィードAPI、履歴保存、ジャンル選択は実装していません。本番デプロイ・Cloudflareアカウント操作・秘密情報の登録は実施していません。
 
@@ -22,6 +22,8 @@ pnpm test
 pnpm build
 pnpm preview
 # http://localhost:4173
+pnpm preview:lan
+# 同じWi-FiのiPhoneから http://<PCのWi-Fi IPv4>:4174
 ```
 
 Cloudflareへのログイン・APIキー・D1は不要です。`pnpm dev` / `pnpm preview` はローカルworkerdを使用します。`pnpm-workspace.yaml`は公式ツールチェーンのesbuild/workerdのインストールスクリプトだけ許可しています。デプロイ用スクリプトは追加していません。
@@ -80,7 +82,7 @@ pnpm dev
 
 ## 未完了の手動・実機チェック
 
-**iPhone Safari実機（必須、未実施）**。PCのモバイル幅表示は代替になりません。ローカルLANで確認する場合は、PCで`pnpm dev --host 0.0.0.0`を起動し、同じ信頼できるLANのiPhoneからPCのIP:5173を開きます（外部公開やファイアウォール設定変更は本作業では行っていません）。
+**iPhone Safari実機（必須、表示・再生のみ利用者確認済み、その他は確認中）**。PCのモバイル幅表示は代替になりません。PCで`pnpm build`→`pnpm preview:lan`を実行し、同じWi-FiのiPhoneからPCのIP:4174を開きます。[接続・停止・トラブル対処と実機記録シート](docs/IPHONE_SAFARI_QA.md)を参照してください。外部公開やファイアウォール設定の自動変更は行いません。
 
 - [ ] iframe内部の上下スワイプがページ移動するか記録。捕捉されてもiframe外の前/次と余白スクロールで全動画へ到達できること。
 - [ ] 初回アクセス・低電力モード等で自動再生拒否時も標準再生ボタンが機能し、ミュート解除・一時停止・シークができること。
@@ -94,6 +96,7 @@ pnpm dev
 次の手順はDraft PRのレビューと上記実機チェック。Phase 2以降は別依頼として着手します。
 
 ## 開発ドキュメント
+- [iPhone Safari・同じWi-Fiでの検証手順](docs/IPHONE_SAFARI_QA.md)
 - [Phase 1 コードガイド・共有／復元手順](docs/PHASE1_CODE_GUIDE.md)
 - [プロトタイプ仕様書 v0.2](docs/SPEC.md)
 - [10/20までの実装計画](docs/PLAN.md)

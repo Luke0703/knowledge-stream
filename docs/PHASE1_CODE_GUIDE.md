@@ -24,6 +24,8 @@ pnpm dev
 
 ブラウザで`http://localhost:5173`を開きます。Cloudflareへのログインや秘密情報は不要です。ビルド済み成果物は`pnpm preview`で確認できます。既存の作業コピーを更新する場合は、ローカル変更を確認してから対象ブランチ上で`git pull --ff-only`を実行してください。
 
+同じWi-FiのiPhoneへ共有する場合は、ビルド後に`pnpm preview:lan`を実行します。[iPhone Safari検証手順](IPHONE_SAFARI_QA.md)に接続先の調べ方と確認結果を記録しています。`vite.config.ts`の`lan`モードでデバッグ・管理機能を無効化し、ビルド済みアプリをポート4174で提供します。
+
 ## ファイルごとの役割
 
 | ファイル | 役割 |
