@@ -94,6 +94,7 @@ pnpm dev
 次の手順はDraft PRのレビューと上記実機チェック。Phase 2以降は別依頼として着手します。
 
 ## 開発ドキュメント
+- [Phase 1 コードガイド・共有／復元手順](docs/PHASE1_CODE_GUIDE.md)
 - [プロトタイプ仕様書 v0.2](docs/SPEC.md)
 - [10/20までの実装計画](docs/PLAN.md)
 - [Codexへの初回指示](docs/CODEX_START.md)
