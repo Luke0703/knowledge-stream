@@ -75,7 +75,13 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
             ? <YouTubePlayer video={video} index={index} coordinator={coordinator} />
             : <><div className="player-surface placeholder">近づくとプレーヤーを読み込みます</div><div className="player-status" /></>}
         </div>
-        <a className="youtube-link" href={`https://www.youtube.com/watch?v=${video.externalVideoId}`} target="_blank" rel="noreferrer">YouTubeで開く ↗</a>
+        <div className="video-actions">
+          <a className="youtube-link" href={`https://www.youtube.com/watch?v=${video.externalVideoId}`} target="_blank" rel="noreferrer">YouTubeで開く ↗</a>
+          <div role="group" aria-label="この動画の音声">
+            <button disabled={active !== index} onClick={() => coordinator.setMuted(index, false)}>音声オン</button>
+            <button disabled={active !== index} onClick={() => coordinator.setMuted(index, true)}>音声オフ</button>
+          </div>
+        </div>
       </article>)}
     </main>
     <section className="feed-controls" aria-label="動画の切り替え">

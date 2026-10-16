@@ -14,6 +14,7 @@ class FakePlayer {
   pauseVideo = vi.fn()
   playVideo = vi.fn()
   mute = vi.fn()
+  unMute = vi.fn()
   destroy = vi.fn(() => {
     expect(this.iframe.isConnected).toBe(true)
     this.iframe.remove()
