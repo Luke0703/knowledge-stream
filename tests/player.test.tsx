@@ -26,11 +26,12 @@ class FakePlayer {
   ready() { this.options.events?.onReady?.({ target: this as unknown as YT.Player }) }
 }
 beforeEach(() => {
+  vi.useFakeTimers()
   instances.length = 0
   vi.mocked(loadYouTubeApi).mockResolvedValue({ Player: FakePlayer } as unknown as typeof YT)
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
-const flush = async () => { await act(async () => { await Promise.resolve() }) }
+const flush = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(150) }) }
 
 it('cleans up StrictMode async initialization and ignores ready after unmount', async () => {
   const coordinator = new PlaybackCoordinator()
@@ -54,7 +55,7 @@ it('shows autoplay guidance separately from errors and retries by destroying the
   const instance = instances[0]
   act(() => instance.ready())
   act(() => instance.options.events?.onAutoplayBlocked?.({ target: instance as unknown as YT.Player }))
-  expect(screen.getByText(/自動再生が制限/)).toBeTruthy()
+  expect(screen.getByText(/自動再生は許可されません/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: '再試行' })).toBeNull()
   act(() => instance.options.events?.onError?.({ target: instance as unknown as YT.Player, data: 150 }))
   expect(screen.getByText(/埋め込み再生が許可/)).toBeTruthy()
@@ -145,4 +146,32 @@ it('destroys every iframe and clears timers over repeated ready and not-yet-read
     coordinator.play(0)
     expect(instance.playVideo).toHaveBeenCalledTimes(starts)
   }
+})
+
+it('cancels short-lived mounts before creating iframes and still loads the final card', async () => {
+  const coordinator = new PlaybackCoordinator()
+  coordinator.setActive(0)
+  for (let cycle = 0; cycle < 30; cycle++) {
+    const view = render(<YouTubePlayer video={testVideos[0]} index={0} coordinator={coordinator} />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+  expect(instances).toHaveLength(0)
+  render(<YouTubePlayer video={testVideos[0]} index={0} coordinator={coordinator} />)
+  await flush()
+  expect(instances).toHaveLength(1)
+  act(() => instances[0].ready())
+  expect(instances[0].playVideo).toHaveBeenCalledOnce()
+})
+
+it('offers manual play after ready even when no autoplay-blocked event arrives', async () => {
+  const coordinator = new PlaybackCoordinator()
+  coordinator.setActive(0)
+  render(<YouTubePlayer video={testVideos[0]} index={0} coordinator={coordinator} />)
+  await flush()
+  act(() => instances[0].ready())
+  instances[0].playVideo.mockClear()
+  fireEvent.click(screen.getByRole('button', { name: '再生する' }))
+  expect(instances[0].playVideo).toHaveBeenCalledOnce()
 })

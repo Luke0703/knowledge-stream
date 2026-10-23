@@ -21,17 +21,23 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
         Math.max(0, Math.min(innerWidth, bounds.right) - Math.max(0, bounds.left)),
         Math.max(0, Math.min(innerHeight, bounds.bottom) - Math.max(0, bounds.top)))
       const cards = Array.from(root.querySelectorAll<HTMLElement>('.video-card'))
-      const samples = cards.map((card, index) => ({
-        index, cardRatio: visibleRatio(card.getBoundingClientRect(), clipped),
-        playerRatio: visibleRatio(card.querySelector('.player-surface')!.getBoundingClientRect(), clipped),
-      }))
+      const samples = cards.map((card, index) => {
+        const rect = card.getBoundingClientRect()
+        return {
+          index, cardRatio: visibleRatio(rect, clipped),
+          // Loading follows the feed position, even if the browser clips the card.
+          loadRatio: visibleRatio(rect, bounds),
+          playerRatio: visibleRatio(card.querySelector('.player-surface')!.getBoundingClientRect(), clipped),
+        }
+      })
       const next = selectActive(samples)
       const visible = document.visibilityState === 'visible'
       if (!visible) coordinator.setVisible(false)
       coordinator.setActive(next)
       coordinator.setVisible(visible)
       setActive(next)
-      if (next !== null) setCenter(next)
+      setCenter(previous => samples.reduce((best, sample) =>
+        sample.loadRatio > (samples[best]?.loadRatio ?? 0) ? sample.index : best, previous))
     }
     // Synchronous scroll measurement stops the old video before the next React render.
     measureNow.current = measure
@@ -39,6 +45,7 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
     window.visualViewport?.addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('scroll', measure)
     document.addEventListener('visibilitychange', measure)
     const observer = new ResizeObserver(measure)
     observer.observe(root)
@@ -49,6 +56,7 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
       window.visualViewport?.removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('scroll', measure)
       document.removeEventListener('visibilitychange', measure)
       observer.disconnect()
       coordinator.setActive(null)
@@ -56,11 +64,13 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
   }, [coordinator, videos])
 
   const navigate = (index: number) => {
-    const card = viewport.current?.children[index] as HTMLElement | undefined
-    if (!card) return
+    const root = viewport.current
+    const card = root?.children[index] as HTMLElement | undefined
+    if (!root || !card) return
     // Pause immediately; measured visibility, not the button, authorizes playback.
     coordinator.setActive(null)
-    card.scrollIntoView({ block: 'start', behavior: 'instant' })
+    // Move only the feed, not the outer page/URL bar as scrollIntoView can do.
+    root.scrollTo({ top: root.scrollTop + card.getBoundingClientRect().top - root.getBoundingClientRect().top, behavior: 'instant' })
     // Keep the request inside the click gesture for a ready adjacent player.
     // Visibility still gates playback; Safari/YouTube may still reject sound-on autoplay.
     measureNow.current?.()

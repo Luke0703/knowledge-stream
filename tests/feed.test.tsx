@@ -20,14 +20,14 @@ vi.mock('../src/player/YouTubePlayer', async () => {
 
 let position = 0
 let scrollWorks = true
-const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo')
 beforeEach(() => {
   players.clear(); position = 0; scrollWorks = true
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
     configurable: true,
-    value: vi.fn(function (this: HTMLElement) {
-      if (scrollWorks) position = Array.from(this.parentElement!.children).indexOf(this)
+    value: vi.fn(function (this: HTMLElement, options: ScrollToOptions) {
+      if (scrollWorks) { position = (options.top ?? 0) / 600; this.scrollTop = options.top ?? 0 }
     }),
   })
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
@@ -41,8 +41,8 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals()
-  if (originalScroll) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScroll)
-  else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView
+  if (originalScroll) Object.defineProperty(HTMLElement.prototype, 'scrollTo', originalScroll)
+  else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollTo
 })
 
 it('requests the ready next player synchronously without waiting for a scroll event', () => {
@@ -63,6 +63,30 @@ it('does not authorize the target when scrolling fails to make it visible', () =
   scrollWorks = false
   fireEvent.click(screen.getByRole('button', { name: '次へ ↓' }))
   expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+})
+
+it('loads the card in the feed even when viewport clipping prevents autoplay', () => {
+  render(<VideoFeed videos={testVideos} preloadAdjacent={false} />)
+  vi.stubGlobal('innerHeight', 250)
+  position = 2
+  fireEvent.scroll(screen.getByRole('main', { name: '動画フィード' }))
+  expect([...players.keys()]).toEqual([2])
+  expect(players.get(2)!.playVideo).not.toHaveBeenCalled()
+  expect(screen.getByText('3 / 3')).toBeTruthy()
+  vi.stubGlobal('innerHeight', 800)
+  fireEvent.resize(window)
+  expect(players.get(2)!.playVideo).toHaveBeenCalledOnce()
+})
+
+it('loads the nearest card during an unsettled scroll without authorizing playback', () => {
+  render(<VideoFeed videos={testVideos} preloadAdjacent={false} />)
+  position = 1.6 // Neither card meets the 65% autoplay threshold.
+  fireEvent.scroll(screen.getByRole('main', { name: '動画フィード' }))
+  expect([...players.keys()]).toEqual([2])
+  expect(players.get(2)!.playVideo).not.toHaveBeenCalled()
+  position = 2
+  fireEvent.scroll(screen.getByRole('main', { name: '動画フィード' }))
+  expect(players.get(2)!.playVideo).toHaveBeenCalledOnce()
 })
 
 it.each([true, false])('bounds mounted players over 100 transitions (preload=%s) and releases them on unmount', preloadAdjacent => {
