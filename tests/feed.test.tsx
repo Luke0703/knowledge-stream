@@ -12,7 +12,7 @@ vi.mock('../src/player/YouTubePlayer', async () => {
       const player = { pauseVideo: vi.fn(), playVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn() }
       players.set(index, player)
       coordinator.register(index, player)
-      return () => coordinator.unregister(index, player)
+      return () => { coordinator.unregister(index, player); players.delete(index) }
     }, [index, coordinator])
     return createElement('div', { className: 'player-surface' })
   } }
@@ -63,4 +63,27 @@ it('does not authorize the target when scrolling fails to make it visible', () =
   scrollWorks = false
   fireEvent.click(screen.getByRole('button', { name: '次へ ↓' }))
   expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+})
+
+it.each([true, false])('bounds mounted players over 100 transitions (preload=%s) and releases them on unmount', preloadAdjacent => {
+  const view = render(<VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />)
+  const retired: PlayerControl[] = []
+  for (let step = 0; step < 100; step++) {
+    const previous = players.get(position)!
+    vi.mocked(previous.pauseVideo).mockClear()
+    const forward = step % 4 < 2
+    fireEvent.click(screen.getByRole('button', { name: forward ? '次へ ↓' : '↑ 前へ' }))
+    expect(previous.pauseVideo).toHaveBeenCalled()
+    const expected = preloadAdjacent
+      ? [0, 1, 2].filter(index => Math.abs(index - position) <= 1) : [position]
+    expect([...players.keys()].sort()).toEqual(expected)
+    if (!preloadAdjacent) {
+      retired.push(previous)
+      expect(players.get(position)!.playVideo).toHaveBeenCalledOnce()
+    }
+  }
+  // Each retired player was started exactly once, never restarted by later navigation.
+  for (const player of retired) expect(player.playVideo).toHaveBeenCalledOnce()
+  view.unmount()
+  expect(players.size).toBe(0)
 })

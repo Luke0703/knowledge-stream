@@ -4,6 +4,8 @@ import { testVideos } from './videos'
 import { VideoFeed } from './VideoFeed'
 
 export default function App() {
+  // Opt-in comparison for the iPhone slowdown investigation; no saved setting.
+  const [preloadAdjacent] = useState(() => new URLSearchParams(window.location.search).get('preload') !== 'off')
   const [apiStatus, setApiStatus] = useState('API 接続中')
   useEffect(() => {
     const controller = new AbortController()
@@ -19,8 +21,8 @@ export default function App() {
   }, [])
 
   return <div className="app-shell">
-    <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{apiStatus}</span></header>
-    <VideoFeed videos={testVideos} />
+    <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
+    <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current="page">▶ <span>動画</span></button>
       <button disabled>⌕ <span>検索</span><small>準備中</small></button>

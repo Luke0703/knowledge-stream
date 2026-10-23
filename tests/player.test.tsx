@@ -122,3 +122,27 @@ it('clears buffer waits on pause and offers a guarded play action when autoplay 
   fireEvent.click(screen.getByRole('button', { name: '再生する' }))
   expect(instance.playVideo).toHaveBeenCalledOnce()
 })
+
+it('destroys every iframe and clears timers over repeated ready and not-yet-ready unmounts', async () => {
+  vi.useFakeTimers()
+  const coordinator = new PlaybackCoordinator()
+  coordinator.setActive(0)
+  for (let cycle = 0; cycle < 50; cycle++) {
+    const view = render(<YouTubePlayer video={testVideos[0]} index={0} coordinator={coordinator} />)
+    await flush()
+    const instance = instances[cycle]
+    if (cycle % 2 === 0) {
+      act(() => instance.ready())
+      act(() => instance.options.events?.onStateChange?.({ target: instance as unknown as YT.Player, data: 3 }))
+    }
+    view.unmount()
+    expect(instance.destroy).toHaveBeenCalledOnce()
+    expect(document.querySelectorAll('iframe')).toHaveLength(0)
+    expect(vi.getTimerCount()).toBe(0)
+    const starts = instance.playVideo.mock.calls.length
+    // Late YouTube callbacks must not re-register a destroyed player.
+    act(() => instance.ready())
+    coordinator.play(0)
+    expect(instance.playVideo).toHaveBeenCalledTimes(starts)
+  }
+})

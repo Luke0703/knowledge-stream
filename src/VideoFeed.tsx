@@ -4,7 +4,7 @@ import { inMountWindow, selectActive, visibleRatio } from './player/visibility'
 import { YouTubePlayer } from './player/YouTubePlayer'
 import type { TestVideo } from './videos'
 
-export function VideoFeed({ videos }: { videos: TestVideo[] }) {
+export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVideo[]; preloadAdjacent?: boolean }) {
   const viewport = useRef<HTMLDivElement>(null)
   const measureNow = useRef<(() => void) | null>(null)
   const [coordinator] = useState(() => new PlaybackCoordinator())
@@ -76,7 +76,7 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
           <h2>{video.label}</h2>
         </div>
         <div className="player-slot">
-          {inMountWindow(index, center)
+          {(preloadAdjacent ? inMountWindow(index, center) : index === center)
             ? <YouTubePlayer video={video} index={index} coordinator={coordinator} />
             : <><div className="player-surface placeholder">近づくとプレーヤーを読み込みます</div><div className="player-status" /></>}
         </div>
