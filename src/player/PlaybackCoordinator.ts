@@ -33,6 +33,13 @@ export class PlaybackCoordinator {
 
   canPlay(index: number) { return this.visible && this.active === index }
 
+  // Explicit retry from an outside-player button after autoplay was blocked.
+  play(index: number) {
+    if (!this.canPlay(index)) return
+    const player = this.players.get(index)
+    if (player) this.start(player)
+  }
+
   // Called directly by a user gesture, never by autoplay or delayed callbacks.
   // These are explicit commands, not a cached mute-state toggle: native UI may change it too.
   setMuted(index: number, muted: boolean) {

@@ -20,6 +20,21 @@ describe('visibility and mount window', () => {
 })
 
 describe('playback ownership', () => {
+  it('allows an explicit play retry only for the ready, visible active player', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.setActive(0)
+    coordinator.play(0) // Not ready yet: do not queue a future gesture.
+    coordinator.register(0, first); coordinator.register(1, next)
+    first.playVideo.mockClear()
+    coordinator.play(1)
+    expect(next.playVideo).not.toHaveBeenCalled()
+    coordinator.play(0)
+    expect(first.playVideo).toHaveBeenCalledOnce()
+    coordinator.setVisible(false); coordinator.play(0)
+    expect(first.playVideo).toHaveBeenCalledOnce()
+    coordinator.unregister(0, first); coordinator.setVisible(true); coordinator.play(0)
+    expect(first.playVideo).toHaveBeenCalledOnce()
+  })
   it('only changes audio for the current visible ready player without restarting playback', () => {
     const coordinator = new PlaybackCoordinator(), current = player(), next = player()
     coordinator.setActive(0)

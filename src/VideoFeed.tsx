@@ -6,6 +6,7 @@ import type { TestVideo } from './videos'
 
 export function VideoFeed({ videos }: { videos: TestVideo[] }) {
   const viewport = useRef<HTMLDivElement>(null)
+  const measureNow = useRef<(() => void) | null>(null)
   const [coordinator] = useState(() => new PlaybackCoordinator())
   const [active, setActive] = useState<number | null>(null)
   const [center, setCenter] = useState(0)
@@ -33,6 +34,7 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
       if (next !== null) setCenter(next)
     }
     // Synchronous scroll measurement stops the old video before the next React render.
+    measureNow.current = measure
     root.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
@@ -42,6 +44,7 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
     observer.observe(root)
     measure()
     return () => {
+      measureNow.current = null
       root.removeEventListener('scroll', measure)
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
@@ -58,6 +61,9 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
     // Pause immediately; measured visibility, not the button, authorizes playback.
     coordinator.setActive(null)
     card.scrollIntoView({ block: 'start', behavior: 'instant' })
+    // Keep the request inside the click gesture for a ready adjacent player.
+    // Visibility still gates playback; Safari/YouTube may still reject sound-on autoplay.
+    measureNow.current?.()
   }
 
   if (!videos.length) return <main className="empty-state">テスト動画がありません。動画データを確認してください。</main>
@@ -66,9 +72,8 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
     <main className="feed" ref={viewport} aria-label="動画フィード" tabIndex={0}>
       {videos.map((video, index) => <article key={video.id} className="video-card" aria-label={`${index + 1}本目: ${video.label}`} data-active={active === index}>
         <div className="video-meta">
-          <span className="eyebrow">{video.category} <span> / {String(index + 1).padStart(2, '0')}</span></span>
+          <span className="eyebrow">{video.category} <span> / {String(index + 1).padStart(2, '0')} · 独自ラベル</span></span>
           <h2>{video.label}</h2>
-          <p>技術検証用の独自ラベル</p>
         </div>
         <div className="player-slot">
           {inMountWindow(index, center)
@@ -85,7 +90,6 @@ export function VideoFeed({ videos }: { videos: TestVideo[] }) {
       </article>)}
     </main>
     <section className="feed-controls" aria-label="動画の切り替え">
-      <p>動画内でスワイプできない場合は、前へ／次へ</p>
       <div><button onClick={() => navigate(center - 1)} disabled={center === 0}>↑ 前へ</button>
         <span aria-live="polite">{center + 1} / {videos.length}</span>
         <button onClick={() => navigate(center + 1)} disabled={center === videos.length - 1}>次へ ↓</button></div>
