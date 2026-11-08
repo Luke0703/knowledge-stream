@@ -5,10 +5,14 @@ import { YouTubePlayer } from './player/YouTubePlayer'
 import type { TestVideo } from './videos'
 import { countPlayerWork } from './player/diagnostics'
 
-export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVideo[]; preloadAdjacent?: boolean }) {
+export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp }: { videos: TestVideo[]; preloadAdjacent?: boolean; coordinator?: PlaybackCoordinator }) {
   const viewport = useRef<HTMLDivElement>(null)
   const measureNow = useRef<(() => void) | null>(null)
-  const [coordinator] = useState(() => new PlaybackCoordinator())
+  // App passes its coordinator so the start tap (stamped before the feed
+  // mounts) counts toward the first player's gesture window. Standalone
+  // use (tests) falls back to an internal one.
+  const [ownCoordinator] = useState(() => new PlaybackCoordinator())
+  const coordinator = coordinatorProp ?? ownCoordinator
   const [active, setActive] = useState<number | null>(null)
   const [center, setCenter] = useState(0)
   const [previousPlayers, setPreviousPlayers] = useState<number[]>([])

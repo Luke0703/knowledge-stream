@@ -2,10 +2,16 @@ import { useEffect, useState } from 'react'
 import type { HealthResponse } from '../shared/api'
 import { testVideos } from './videos'
 import { VideoFeed } from './VideoFeed'
+import { PlaybackCoordinator } from './player/PlaybackCoordinator'
 import { startDiagnostics } from './player/diagnostics'
 
 export default function App() {
   useEffect(startDiagnostics, [])
+  // The coordinator lives here, not in the feed, so the start tap itself
+  // can be stamped as a genuine gesture before the feed (and its players)
+  // exist. Safari needs this: its activation from the tap fades fast, and
+  // the first player's block lands only after the player becomes ready.
+  const [coordinator] = useState(() => new PlaybackCoordinator())
   // Start gate (user-approved 2026-11-08): browsers only allow sound-on
   // playback inside a genuine user gesture, so the feed is not mounted
   // until the user taps start. That single real tap is what lets the first
@@ -31,11 +37,11 @@ export default function App() {
   return <div className="app-shell">
     <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
     {started
-      ? <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />
+      ? <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} />
       : <main className="start-screen">
           <p className="start-title">タップして動画をはじめる</p>
           <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。開始をタップすると、1本目から音声つきで再生が始まります。</p>
-          <button className="start-button" onClick={() => setStarted(true)}>▶ タップして開始</button>
+          <button className="start-button" onPointerDown={() => coordinator.noteUserGesture()} onClick={() => setStarted(true)}>▶ タップして開始</button>
         </main>}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current="page">▶ <span>動画</span></button>
