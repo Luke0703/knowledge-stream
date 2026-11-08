@@ -87,6 +87,53 @@ describe('playback ownership', () => {
     coordinator.handleUserGesture() // One-shot: a later tap does not restart it.
     expect(current.playVideo).toHaveBeenCalledOnce()
   })
+  it('retries a block that lands just after a genuine gesture, once per gesture (the swipe case)', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), current = player()
+      coordinator.setActive(0); coordinator.register(0, current)
+      current.playVideo.mockClear(); current.unMute.mockClear()
+      coordinator.handleUserGesture() // The swipe: stamps the gesture, nothing blocked yet.
+      now += 800 // The feed settles, the start attempt runs, YouTube blocks it.
+      coordinator.onAutoplayBlocked(0)
+      expect(current.unMute).toHaveBeenCalledOnce()
+      expect(current.playVideo).toHaveBeenCalledOnce() // Retried on the swipe's own activation.
+      coordinator.onAutoplayBlocked(0) // The retry blocked too: the same gesture buys no second retry.
+      expect(current.playVideo).toHaveBeenCalledOnce()
+      now += 5000
+      coordinator.handleUserGesture() // A genuinely new gesture retries the recorded block.
+      expect(current.playVideo).toHaveBeenCalledTimes(2)
+    } finally { vi.restoreAllMocks() }
+  })
+  it('keeps a block waiting for a tap when no recent gesture precedes it', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), current = player()
+      coordinator.setActive(0); coordinator.register(0, current)
+      coordinator.handleUserGesture() // A gesture long before the block.
+      current.playVideo.mockClear()
+      now += 60000
+      coordinator.onAutoplayBlocked(0) // Far outside the gesture window: no retry.
+      expect(current.playVideo).not.toHaveBeenCalled()
+      coordinator.handleUserGesture()
+      expect(current.playVideo).toHaveBeenCalledOnce()
+    } finally { vi.restoreAllMocks() }
+  })
+  it('does not auto-retry a block for a non-active player after a gesture', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+      coordinator.register(0, first); coordinator.register(1, next)
+      coordinator.setActive(0)
+      coordinator.handleUserGesture()
+      next.playVideo.mockClear()
+      coordinator.onAutoplayBlocked(1)
+      expect(next.playVideo).not.toHaveBeenCalled()
+    } finally { vi.restoreAllMocks() }
+  })
   it('does not let a gesture restart a player that already reached playback', () => {
     const coordinator = new PlaybackCoordinator(), current = player()
     coordinator.setActive(0); coordinator.register(0, current)

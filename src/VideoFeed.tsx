@@ -52,6 +52,11 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
     // Capture phase keeps the retry inside the gesture's own call stack.
     const unlock = () => coordinator.handleUserGesture()
     window.addEventListener('pointerdown', unlock, { capture: true })
+    // A swipe's pointerdown precedes the block its landing produces, so
+    // stamp the gesture's end as well; the coordinator retries a block
+    // that lands within the gesture window, once per real gesture.
+    const stampGestureEnd = () => coordinator.noteUserGesture()
+    window.addEventListener('pointerup', stampGestureEnd, { capture: true, passive: true })
     root.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
@@ -74,6 +79,7 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
     return () => {
       measureNow.current = null
       window.removeEventListener('pointerdown', unlock, { capture: true })
+      window.removeEventListener('pointerup', stampGestureEnd, { capture: true })
       root.removeEventListener('scroll', measure)
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
