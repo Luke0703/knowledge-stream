@@ -39,6 +39,10 @@ h2 { font-size: clamp(16px, 2.5vw, 22px); margin: 3px 0 0; }
 .bottom-nav button[aria-current] { color: #a8ecd3; background: #233c43; }
 .bottom-nav small { font-size: 9px; }
 .empty-state { padding: 40px 20px; }
+.start-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 24px; min-height: 0; }
+.start-screen p { color: #9dafb7; font-size: 13px; line-height: 1.7; margin: 0; max-width: 420px; }
+.start-screen .start-title { color: #eaf2f3; font-size: 20px; font-weight: 700; }
+.start-button { font-size: 16px; font-weight: 700; padding: 14px 34px; border-radius: 999px; background: #2b6a5a; border-color: #a8ecd3; }
 @media (max-width: 600px) {
   .app-header { display: none; }
   .app-shell { grid-template-rows: minmax(0, 1fr) auto auto; padding-top: env(safe-area-inset-top); }

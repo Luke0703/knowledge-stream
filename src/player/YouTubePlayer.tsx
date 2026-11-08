@@ -125,6 +125,7 @@ export function YouTubePlayer({ video, index, coordinator, load = true }: {
             onAutoplayBlocked: () => {
               if (cancelled || !loadRef.current) return
               clearBufferWait()
+              coordinator.onAutoplayBlocked(index)
               setBlocked(true)
               setStatus('音声付きの自動再生は許可されませんでした。「再生する」を押してください。')
             },

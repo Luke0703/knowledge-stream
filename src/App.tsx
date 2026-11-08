@@ -6,6 +6,12 @@ import { startDiagnostics } from './player/diagnostics'
 
 export default function App() {
   useEffect(startDiagnostics, [])
+  // Start gate (user-approved 2026-11-08): browsers only allow sound-on
+  // playback inside a genuine user gesture, so the feed is not mounted
+  // until the user taps start. That single real tap is what lets the first
+  // video begin with sound, reel-app style. Nothing is overlaid on the
+  // player: before the tap there is no player on screen at all.
+  const [started, setStarted] = useState(false)
   // Opt-in comparison for the iPhone slowdown investigation; no saved setting.
   const [preloadAdjacent] = useState(() => new URLSearchParams(window.location.search).get('preload') !== 'off')
   const [apiStatus, setApiStatus] = useState('API 接続中')
@@ -24,7 +30,13 @@ export default function App() {
 
   return <div className="app-shell">
     <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
-    <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />
+    {started
+      ? <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />
+      : <main className="start-screen">
+          <p className="start-title">タップして動画をはじめる</p>
+          <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。開始をタップすると、1本目から音声つきで再生が始まります。</p>
+          <button className="start-button" onClick={() => setStarted(true)}>▶ タップして開始</button>
+        </main>}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current="page">▶ <span>動画</span></button>
       <button disabled>⌕ <span>検索</span><small>準備中</small></button>

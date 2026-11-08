@@ -73,6 +73,43 @@ describe('playback ownership', () => {
     coordinator.onStateChange(0, stale, 3)
     expect(stale.pauseVideo).toHaveBeenCalledTimes(3)
   })
+  it('retries a blocked sound-on start once, inside the first real user gesture', () => {
+    const coordinator = new PlaybackCoordinator(), current = player()
+    coordinator.setActive(0); coordinator.register(0, current)
+    current.playVideo.mockClear(); current.unMute.mockClear()
+    coordinator.handleUserGesture() // No block recorded: nothing to retry.
+    expect(current.playVideo).not.toHaveBeenCalled()
+    coordinator.onAutoplayBlocked(0)
+    coordinator.handleUserGesture()
+    expect(current.unMute).toHaveBeenCalledOnce()
+    expect(current.playVideo).toHaveBeenCalledOnce()
+    expect(current.unMute.mock.invocationCallOrder[0]).toBeLessThan(current.playVideo.mock.invocationCallOrder[0])
+    coordinator.handleUserGesture() // One-shot: a later tap does not restart it.
+    expect(current.playVideo).toHaveBeenCalledOnce()
+  })
+  it('does not let a gesture restart a player that already reached playback', () => {
+    const coordinator = new PlaybackCoordinator(), current = player()
+    coordinator.setActive(0); coordinator.register(0, current)
+    coordinator.onAutoplayBlocked(0)
+    coordinator.onStateChange(0, current, 1) // Playback began; the block is history.
+    current.playVideo.mockClear()
+    coordinator.handleUserGesture()
+    expect(current.playVideo).not.toHaveBeenCalled()
+  })
+  it('ignores gestures while hidden or when only a non-active player is blocked', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.onAutoplayBlocked(1)
+    next.playVideo.mockClear()
+    coordinator.handleUserGesture()
+    expect(next.playVideo).not.toHaveBeenCalled()
+    coordinator.onAutoplayBlocked(0)
+    coordinator.setVisible(false)
+    first.playVideo.mockClear()
+    coordinator.handleUserGesture()
+    expect(first.playVideo).not.toHaveBeenCalled()
+  })
   it('pauses while hidden or between snaps, and does not restart on unchanged measurements', () => {
     const coordinator = new PlaybackCoordinator(), current = player()
     coordinator.setActive(0); coordinator.register(0, current)

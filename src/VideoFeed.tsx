@@ -48,22 +48,38 @@ export function VideoFeed({ videos, preloadAdjacent = true }: { videos: TestVide
     }
     // Synchronous scroll measurement stops the old video before the next React render.
     measureNow.current = measure
+    // The first genuine tap retries a sound-on start the browser blocked.
+    // Capture phase keeps the retry inside the gesture's own call stack.
+    const unlock = () => coordinator.handleUserGesture()
+    window.addEventListener('pointerdown', unlock, { capture: true })
     root.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
-    window.visualViewport?.addEventListener('resize', measure)
-    window.visualViewport?.addEventListener('scroll', measure)
+    // visualViewport events fire continuously during iOS scrolling and
+    // URL-bar show/hide, and each one used to run a full synchronous
+    // measure (DOM reads + coordinator reconcile + state pass), duplicating
+    // the feed-scroll path. Coalesce them to at most one measure per
+    // animation frame; the feed's own scroll handler stays synchronous.
+    let viewportFrame: number | null = null
+    const measureViewport = () => {
+      if (viewportFrame !== null) return
+      viewportFrame = requestAnimationFrame(() => { viewportFrame = null; measure() })
+    }
+    window.visualViewport?.addEventListener('resize', measureViewport)
+    window.visualViewport?.addEventListener('scroll', measureViewport)
     document.addEventListener('visibilitychange', measure)
     const observer = new ResizeObserver(measure)
     observer.observe(root)
     measure()
     return () => {
       measureNow.current = null
+      window.removeEventListener('pointerdown', unlock, { capture: true })
       root.removeEventListener('scroll', measure)
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
-      window.visualViewport?.removeEventListener('resize', measure)
-      window.visualViewport?.removeEventListener('scroll', measure)
+      window.visualViewport?.removeEventListener('resize', measureViewport)
+      window.visualViewport?.removeEventListener('scroll', measureViewport)
+      if (viewportFrame !== null) cancelAnimationFrame(viewportFrame)
       document.removeEventListener('visibilitychange', measure)
       observer.disconnect()
       coordinator.setActive(null)
