@@ -7,17 +7,40 @@ import { startDiagnostics } from './player/diagnostics'
 
 export default function App() {
   useEffect(startDiagnostics, [])
-  // The coordinator lives here, not in the feed, so the start tap itself
-  // can be stamped as a genuine gesture before the feed (and its players)
-  // exist. Safari needs this: its activation from the tap fades fast, and
-  // the first player's block lands only after the player becomes ready.
-  const [coordinator] = useState(() => new PlaybackCoordinator())
-  // Start gate (user-approved 2026-11-08): browsers only allow sound-on
-  // playback inside a genuine user gesture, so the feed is not mounted
-  // until the user taps start. That single real tap is what lets the first
-  // video begin with sound, reel-app style. Nothing is overlaid on the
-  // player: before the tap there is no player on screen at all.
+  // The coordinator lives here, not in the feed, so App can hold playback
+  // during preparation and release it from the decisive start tap.
+  const [coordinator] = useState(() => {
+    const created = new PlaybackCoordinator()
+    created.setHeld(true)
+    return created
+  })
+  // Start flow, round 3 (2026-11-10; user-approved start gate 2026-11-08,
+  // two-phase revision after real-device results): rounds 1-2 mounted the
+  // feed only AFTER the start tap, so the first play request was issued
+  // seconds later from an async onReady chain and Safari's transient
+  // activation from the tap had already expired; stamping the tap and
+  // retrying inside a time window did not restore it (verified unchanged
+  // on a real iPhone in both Brave and Safari). Now the feed is mounted
+  // behind the start screen from the beginning — concealed with
+  // display:none, never overlaid on a player — while the coordinator is
+  // held, so players are created and cued but no play is requested and
+  // no autoplay block is generated. Once the first player reports ready,
+  // the start button enables, and its click handler calls
+  // coordinator.startFromGesture(0) synchronously, sending unMute +
+  // playVideo to the already-ready player inside the tap itself.
   const [started, setStarted] = useState(false)
+  const [firstReady, setFirstReady] = useState(false)
+  useEffect(() => {
+    const update = () => setFirstReady(coordinator.isReady(0))
+    update()
+    return coordinator.subscribeReady(update)
+  }, [coordinator])
+  const begin = () => {
+    // Synchronous inside this click handler: the play request (when the
+    // player is ready) leaves before the feed is even revealed.
+    coordinator.startFromGesture(0)
+    setStarted(true)
+  }
   // Opt-in comparison for the iPhone slowdown investigation; no saved setting.
   const [preloadAdjacent] = useState(() => new URLSearchParams(window.location.search).get('preload') !== 'off')
   const [apiStatus, setApiStatus] = useState('API 接続中')
@@ -36,13 +59,15 @@ export default function App() {
 
   return <div className="app-shell">
     <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
-    {started
-      ? <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} />
-      : <main className="start-screen">
-          <p className="start-title">タップして動画をはじめる</p>
-          <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。開始をタップすると、1本目から音声つきで再生が始まります。</p>
-          <button className="start-button" onPointerDown={() => coordinator.noteUserGesture()} onClick={() => setStarted(true)}>▶ タップして開始</button>
-        </main>}
+    {!started && <main className="start-screen">
+      <p className="start-title">タップして動画をはじめる</p>
+      <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。まず裏でプレーヤーを準備し、準備ができた瞬間のタップから直接再生を始めます。</p>
+      <button className="start-button" disabled={!firstReady} onClick={begin}>{firstReady ? '▶ タップして開始' : 'プレーヤーを準備中…'}</button>
+      {!firstReady && <button className="start-skip" onClick={begin}>準備を待たずに表示する</button>}
+    </main>}
+    <div className={started ? 'feed-host feed-host--started' : 'feed-host feed-host--preparing'}>
+      <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} />
+    </div>
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current="page">▶ <span>動画</span></button>
       <button disabled>⌕ <span>検索</span><small>準備中</small></button>

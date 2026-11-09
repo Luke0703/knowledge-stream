@@ -4,6 +4,13 @@ const counts: Record<string, number> = {}
 export function countPlayerWork(name: string) {
   if (enabled) counts[name] = (counts[name] ?? 0) + 1
 }
+// Immediate, timestamped event line (same opt-in flag as the 5s summary).
+// Used to compare a genuine tap, a player's ready moment, a play request
+// and an autoplay block on one clock, e.g. how many ms after the start
+// tap the first play request actually left the parent page.
+export function diagnosticEvent(name: string, detail: Record<string, unknown>) {
+  if (enabled) console.info('[player-diagnostics]', name, JSON.stringify(detail))
+}
 export function startDiagnostics() {
   if (!enabled) return () => {}
   const started = performance.now()

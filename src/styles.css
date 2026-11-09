@@ -43,6 +43,13 @@ h2 { font-size: clamp(16px, 2.5vw, 22px); margin: 3px 0 0; }
 .start-screen p { color: #9dafb7; font-size: 13px; line-height: 1.7; margin: 0; max-width: 420px; }
 .start-screen .start-title { color: #eaf2f3; font-size: 20px; font-weight: 700; }
 .start-button { font-size: 16px; font-weight: 700; padding: 14px 34px; border-radius: 999px; background: #2b6a5a; border-color: #a8ecd3; }
+.start-skip { font-size: 12px; padding: 6px 14px; background: transparent; border-color: #45616a; color: #9dafb7; }
+/* Preparation (round 3): before the decisive tap the feed is mounted but
+   fully concealed — display:none, a separate screen from the player, not
+   an overlay on it. Once started, display:contents lets the feed and its
+   controls take their normal grid rows directly. */
+.feed-host--preparing { display: none; }
+.feed-host--started { display: contents; }
 @media (max-width: 600px) {
   .app-header { display: none; }
   .app-shell { grid-template-rows: minmax(0, 1fr) auto auto; padding-top: env(safe-area-inset-top); }

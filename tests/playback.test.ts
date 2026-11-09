@@ -157,6 +157,60 @@ describe('playback ownership', () => {
     coordinator.handleUserGesture()
     expect(first.playVideo).not.toHaveBeenCalled()
   })
+  it('holds playback during preparation: ready players register but are never started', () => {
+    const coordinator = new PlaybackCoordinator(), current = player(), next = player()
+    coordinator.setHeld(true)
+    coordinator.setActive(0)
+    coordinator.register(0, current); coordinator.register(1, next)
+    expect(coordinator.isReady(0)).toBe(true)
+    expect(coordinator.canPlay(0)).toBe(false)
+    expect(current.playVideo).not.toHaveBeenCalled()
+    expect(next.playVideo).not.toHaveBeenCalled()
+    coordinator.setVisible(false); coordinator.setVisible(true) // Visibility flips must not release the hold.
+    coordinator.handleUserGesture() // Nor may an ordinary tap during preparation.
+    expect(current.playVideo).not.toHaveBeenCalled()
+  })
+  it('starts the already-ready player synchronously from the decisive gesture', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), current = player(), next = player()
+      coordinator.setHeld(true)
+      coordinator.register(0, current); coordinator.register(1, next)
+      current.playVideo.mockClear(); current.unMute.mockClear()
+      now += 30000 // Long preparation: the earlier page-load moment must not matter.
+      coordinator.startFromGesture(0) // Called inside the tap's own handler.
+      expect(coordinator.isHeld()).toBe(false)
+      expect(coordinator.canPlay(0)).toBe(true)
+      expect(current.unMute).toHaveBeenCalledOnce()
+      expect(current.playVideo).toHaveBeenCalledOnce()
+      expect(current.unMute.mock.invocationCallOrder[0]).toBeLessThan(current.playVideo.mock.invocationCallOrder[0])
+      expect(next.playVideo).not.toHaveBeenCalled()
+      expect(next.pauseVideo).toHaveBeenCalled()
+    } finally { vi.restoreAllMocks() }
+  })
+  it('arms the active index when the decisive gesture precedes readiness, and register starts it', () => {
+    const coordinator = new PlaybackCoordinator(), current = player()
+    coordinator.setHeld(true)
+    coordinator.startFromGesture(0) // No player registered yet: nothing can be sent synchronously.
+    expect(coordinator.canPlay(0)).toBe(true)
+    coordinator.register(0, current) // Fallback path: the request is issued on ready and may still be blocked.
+    expect(current.playVideo).toHaveBeenCalledOnce()
+  })
+  it('notifies ready subscribers on register and unregister', () => {
+    const coordinator = new PlaybackCoordinator(), current = player()
+    const listener = vi.fn()
+    const unsubscribe = coordinator.subscribeReady(listener)
+    coordinator.register(0, current)
+    expect(listener).toHaveBeenCalledOnce()
+    expect(coordinator.isReady(0)).toBe(true)
+    coordinator.unregister(0, current)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(coordinator.isReady(0)).toBe(false)
+    unsubscribe()
+    coordinator.register(0, current)
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
   it('pauses while hidden or between snaps, and does not restart on unchanged measurements', () => {
     const coordinator = new PlaybackCoordinator(), current = player()
     coordinator.setActive(0); coordinator.register(0, current)
