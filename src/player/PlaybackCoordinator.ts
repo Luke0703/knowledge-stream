@@ -1,9 +1,9 @@
 import { countPlayerWork, diagnosticEvent, userActivationSnapshot } from './diagnostics'
-export type PlayerControl = Pick<YT.Player, 'pauseVideo' | 'playVideo' | 'mute' | 'unMute'>
+export type PlayerControl = Pick<YT.Player, 'pauseVideo' | 'playVideo' | 'mute' | 'unMute' | 'seekTo'>
 // Why a play request was issued, recorded in diagnostics so a device
 // session can tell the round-4 early (mid-scroll) attempt apart from the
 // settle-time one and from the older gesture paths.
-type PlayRequestReason = 'reconcile' | 'register' | 'start-gesture' | 'blocked-retry' | 'gesture-retry' | 'explicit-play' | 'early-threshold'
+type PlayRequestReason = 'reconcile' | 'register' | 'start-gesture' | 'blocked-retry' | 'gesture-retry' | 'explicit-play' | 'early-threshold' | 'loop'
 
 // One synchronous authority: pause old players before starting a new one.
 // React state/async onReady callbacks are not trusted as playback eligibility.
@@ -248,6 +248,17 @@ export class PlaybackCoordinator {
     // Includes unexpected/manual playback or a late buffering event after navigation.
     // The early-attempted entering player is exempt: starting mid-scroll is its purpose.
     if ((state === 1 || state === 3) && !this.mayPlay(index)) player.pauseVideo()
+    // Loop (round 5, 2026-11-10, user request): these are Shorts, so the
+    // settled active video restarts from the beginning when it ends,
+    // like the native Shorts player. Only the playable active item
+    // loops; an ENDED arriving for any other player is ignored. The
+    // restart is the identical sound-on request (reason 'loop'); whether
+    // the browser honours it without a fresh gesture is a real-device
+    // question, and a refusal surfaces through the usual blocked path.
+    if (state === 0 && this.canPlay(index)) {
+      player.seekTo(0, true)
+      this.start(index, player, 'loop')
+    }
   }
 
   private start(index: number, player: PlayerControl, reason: PlayRequestReason) {

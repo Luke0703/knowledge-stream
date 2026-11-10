@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PlaybackCoordinator } from '../src/player/PlaybackCoordinator'
 import { inMountWindow, retainedPlayers, selectActive } from '../src/player/visibility'
 
-const player = () => ({ pauseVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn(), playVideo: vi.fn() })
+const player = () => ({ pauseVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn(), playVideo: vi.fn(), seekTo: vi.fn() })
 
 describe('visibility and mount window', () => {
   it('bounds reuse at three while always keeping the entire media load window', () => {
@@ -319,5 +319,35 @@ describe('playback ownership', () => {
     coordinator.unregister(0, current)
     coordinator.setActive(0)
     expect(current.playVideo).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('loop playback (round 5)', () => {
+  it('restarts the settled active video from the beginning when it ends', () => {
+    const coordinator = new PlaybackCoordinator(), current = player()
+    coordinator.setActive(0); coordinator.register(0, current)
+    current.playVideo.mockClear(); current.unMute.mockClear()
+    coordinator.onStateChange(0, current, 0)
+    expect(current.seekTo).toHaveBeenCalledWith(0, true)
+    expect(current.playVideo).toHaveBeenCalledOnce()
+    expect(current.unMute).toHaveBeenCalledOnce()
+  })
+  it('does not loop a video that is not the active one', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    next.seekTo.mockClear(); next.playVideo.mockClear()
+    coordinator.onStateChange(1, next, 0)
+    expect(next.seekTo).not.toHaveBeenCalled()
+    expect(next.playVideo).not.toHaveBeenCalled()
+  })
+  it('does not loop while the document is hidden', () => {
+    const coordinator = new PlaybackCoordinator(), current = player()
+    coordinator.setActive(0); coordinator.register(0, current)
+    coordinator.setVisible(false)
+    current.seekTo.mockClear(); current.playVideo.mockClear()
+    coordinator.onStateChange(0, current, 0)
+    expect(current.seekTo).not.toHaveBeenCalled()
+    expect(current.playVideo).not.toHaveBeenCalled()
   })
 })

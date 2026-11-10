@@ -11,7 +11,7 @@ vi.mock('../src/VideoFeed', () => ({
   },
 }))
 
-const fakePlayer = () => ({ pauseVideo: vi.fn(), playVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn() })
+const fakePlayer = () => ({ pauseVideo: vi.fn(), playVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn(), seekTo: vi.fn() })
 
 beforeEach(() => {
   capturedCoordinator = undefined

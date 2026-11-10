@@ -10,7 +10,7 @@ vi.mock('../src/player/YouTubePlayer', async () => {
   const { createElement, useLayoutEffect, useState } = await import('react')
   return { YouTubePlayer: ({ index, coordinator, load }: { index: number; coordinator: PlaybackCoordinator; load: boolean }) => {
     const [player] = useState(() => {
-      const result = { pauseVideo: vi.fn(), playVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn() }
+      const result = { pauseVideo: vi.fn(), playVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn(), seekTo: vi.fn() }
       created.push(result)
       return result
     })

@@ -48,6 +48,7 @@ export function YouTubePlayer({ video, index, coordinator, load = true }: {
     // playVideo races with asynchronous cue completion during rapid navigation.
     const control: PlayerControl = {
       pauseVideo: () => player!.pauseVideo(),
+      seekTo: (seconds: number, allowSeekAhead: boolean) => player!.seekTo(seconds, allowSeekAhead),
       mute: () => player!.mute(),
       unMute: () => player!.unMute(),
       playVideo: () => {
@@ -117,7 +118,7 @@ export function YouTubePlayer({ video, index, coordinator, load = true }: {
               } else clearBufferWait()
               if (event.data === 1 || event.data === 3) setBlocked(false)
               const states: Record<number, string> = {
-                [-1]: '再生待機中', 0: '再生終了。次の動画へ進めます。',
+                [-1]: '再生待機中', 0: '再生終了。最初からループ再生します。',
                 1: '再生中', 2: '一時停止中', 3: '動画を読み込み中…', 5: '再生待機中',
               }
               setStatus(states[event.data] ?? '再生待機中')
