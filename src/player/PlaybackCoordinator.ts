@@ -1,5 +1,9 @@
-import { countPlayerWork, diagnosticEvent } from './diagnostics'
+import { countPlayerWork, diagnosticEvent, userActivationSnapshot } from './diagnostics'
 export type PlayerControl = Pick<YT.Player, 'pauseVideo' | 'playVideo' | 'mute' | 'unMute'>
+// Why a play request was issued, recorded in diagnostics so a device
+// session can tell the round-4 early (mid-scroll) attempt apart from the
+// settle-time one and from the older gesture paths.
+type PlayRequestReason = 'reconcile' | 'register' | 'start-gesture' | 'blocked-retry' | 'gesture-retry' | 'explicit-play' | 'early-threshold'
 
 // One synchronous authority: pause old players before starting a new one.
 // React state/async onReady callbacks are not trusted as playback eligibility.
@@ -27,23 +31,45 @@ export class PlaybackCoordinator {
   // inside that tap's own event handler.
   private held = false
   private readyListeners = new Set<() => void>()
+  // Round 4 (2026-11-10): the entering item a swipe is bringing in, once
+  // it passed the feed's early threshold. It receives ONE sound-on play
+  // attempt while the scroll is still moving — timed to the transient
+  // activation the touch leaves inside the YouTube iframe itself, which
+  // the settle-time request (rounds 1–3) arrived too late to use. Until
+  // the scroll settles, this player counts as playable so neither the
+  // mid-scroll setActive(null) nor its own playing state event pauses it
+  // again. Settling onto it promotes it to active; settling anywhere
+  // else abandons it. earlyPlaying records that the attempt actually
+  // reached playback/buffering, so promotion does not issue a duplicate.
+  private earlyIndex: number | null = null
+  private earlyPlaying = false
+  // Start of the current scroll episode, stamped by the feed, so
+  // diagnostics can place each attempt on the swipe's own clock.
+  private scrollStartedAt: number | null = null
 
   setActive(index: number | null) {
     if (this.active === index) return
+    // Settling onto the early-attempted item promotes it; if its early
+    // attempt already reached playback, the settle reconcile must not
+    // re-issue the request. Settling on anything else abandons the
+    // early attempt, and reconcile pauses that player again.
+    const promotedAndPlaying = index !== null && index === this.earlyIndex && this.earlyPlaying
     this.active = index
-    this.reconcile()
+    if (index !== null) this.clearEarly()
+    this.reconcile(promotedAndPlaying ? index : null)
   }
 
   setVisible(visible: boolean) {
     if (this.visible === visible) return
     this.visible = visible
+    if (!visible) this.clearEarly()
     this.reconcile()
   }
 
   register(index: number, player: PlayerControl) {
     this.players.set(index, player)
     diagnosticEvent('playerReady', { index, held: this.held, msSinceGesture: this.msSinceGesture() })
-    if (this.canPlay(index)) this.start(player)
+    if (this.mayPlay(index)) this.start(index, player, 'register')
     else player.pauseVideo()
     this.notifyReadyListeners()
   }
@@ -52,6 +78,7 @@ export class PlaybackCoordinator {
     if (this.players.get(index) === player) this.players.delete(index)
     this.blockedByAutoplay.delete(index)
     this.gestureRetryStamp.delete(index)
+    if (this.earlyIndex === index) this.clearEarly()
     player.pauseVideo()
     this.notifyReadyListeners()
   }
@@ -62,6 +89,7 @@ export class PlaybackCoordinator {
   setHeld(held: boolean) {
     if (this.held === held) return
     this.held = held
+    if (held) this.clearEarly()
     this.reconcile()
   }
 
@@ -83,6 +111,53 @@ export class PlaybackCoordinator {
     return Number.isFinite(this.lastGestureAt) ? Math.round(performance.now() - this.lastGestureAt) : null
   }
 
+  private msSinceScrollStart() {
+    return this.scrollStartedAt === null ? null : Math.round(performance.now() - this.scrollStartedAt)
+  }
+
+  // The feed stamps the first scroll event of each scroll episode, so
+  // diagnostics can report how far into the swipe each play attempt was
+  // issued (round 4's hypothesis lives or dies by that timing).
+  noteScrollStarted() {
+    this.scrollStartedAt = performance.now()
+  }
+
+  private clearEarly() {
+    this.earlyIndex = null
+    this.earlyPlaying = false
+  }
+
+  // Playable means the settled active item, or — during one approach —
+  // the early-attempted entering item. The preparation hold and a hidden
+  // document veto both.
+  private mayPlay(index: number) {
+    return this.canPlay(index) || (!this.held && this.visible && index === this.earlyIndex)
+  }
+
+  // Round 4's single early attempt. Called by the feed when an entering
+  // item that is not (yet) the active one first fills the early share of
+  // the viewport, i.e. while the swipe that carries the touch's
+  // transient activation inside the YouTube iframe is still moving —
+  // not after the scroll settles, which rounds 1–3 showed is too late.
+  // One attempt per approach: the coordinator remembers the item until
+  // the scroll settles on it (promotion), settles elsewhere, or the
+  // player goes away. If the attempt is blocked, the settle reconcile
+  // issues the one remaining try; if it plays, promotion skips the
+  // duplicate. No synthetic gestures are involved: this is the identical
+  // unMute + playVideo request, only issued earlier.
+  attemptEarlyStart(index: number) {
+    if (this.held || !this.visible) return
+    if (index === this.active || index === this.earlyIndex) return
+    const player = this.players.get(index)
+    if (!player) return // Not ready yet; the feed re-calls this on later measures of the same approach.
+    this.earlyIndex = index
+    this.earlyPlaying = false
+    for (const [other, otherPlayer] of this.players) if (other !== index) otherPlayer.pauseVideo()
+    this.blockedByAutoplay.delete(index)
+    diagnosticEvent('earlyPlayAttempt', { index, msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
+    this.start(index, player, 'early-threshold')
+  }
+
   // The decisive start tap. Must be called synchronously from a genuine
   // tap/click handler: it stamps that gesture, lifts the hold, makes the
   // index active and — when the player is already ready — sends the
@@ -94,12 +169,13 @@ export class PlaybackCoordinator {
   startFromGesture(index: number) {
     this.noteUserGesture()
     this.held = false
+    this.clearEarly() // A decisive tap supersedes any in-flight early attempt.
     this.active = index
     for (const [other, player] of this.players) if (other !== index) player.pauseVideo()
     const player = this.players.get(index)
     if (player && this.visible) {
       this.blockedByAutoplay.delete(index)
-      this.start(player)
+      this.start(index, player, 'start-gesture')
     }
   }
 
@@ -118,8 +194,12 @@ export class PlaybackCoordinator {
   // for feed navigation), retry right away, once per gesture per player;
   // a block with no recent gesture keeps waiting for the next real tap.
   onAutoplayBlocked(index: number) {
-    diagnosticEvent('autoplayBlocked', { index, msSinceGesture: this.msSinceGesture() })
+    diagnosticEvent('autoplayBlocked', { index, msSinceGesture: this.msSinceGesture(), msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
     this.blockedByAutoplay.add(index)
+    // A block of the early (mid-scroll) attempt is only recorded here:
+    // canPlay is false for it until it settles, and the settle reconcile
+    // then issues the one remaining try. It must not fall into the
+    // gesture-window retry below, which would spend that try early.
     if (!this.canPlay(index)) return
     const gestureAt = this.lastGestureAt
     if (performance.now() - gestureAt > PlaybackCoordinator.GESTURE_WINDOW_MS) return
@@ -128,7 +208,7 @@ export class PlaybackCoordinator {
     if (!player) return
     this.gestureRetryStamp.set(index, gestureAt)
     this.blockedByAutoplay.delete(index)
-    this.start(player)
+    this.start(index, player, 'blocked-retry')
   }
 
   // Called from a real pointerdown handler (capture phase). Retries only a
@@ -144,7 +224,7 @@ export class PlaybackCoordinator {
     if (!player) return
     this.gestureRetryStamp.set(this.active, this.lastGestureAt)
     this.blockedByAutoplay.delete(this.active)
-    this.start(player)
+    this.start(this.active, player, 'gesture-retry')
   }
 
   canPlay(index: number) { return !this.held && this.visible && this.active === index }
@@ -153,7 +233,7 @@ export class PlaybackCoordinator {
   play(index: number) {
     if (!this.canPlay(index)) return
     const player = this.players.get(index)
-    if (player) this.start(player)
+    if (player) this.start(index, player, 'explicit-play')
   }
 
   onStateChange(index: number, player: PlayerControl, state: number) {
@@ -162,21 +242,24 @@ export class PlaybackCoordinator {
     if (state === 1 || state === 3) {
       this.blockedByAutoplay.delete(index)
       this.gestureRetryStamp.delete(index)
+      // The early attempt worked: promotion at settle must not duplicate it.
+      if (index === this.earlyIndex) this.earlyPlaying = true
     }
     // Includes unexpected/manual playback or a late buffering event after navigation.
-    if ((state === 1 || state === 3) && !this.canPlay(index)) player.pauseVideo()
+    // The early-attempted entering player is exempt: starting mid-scroll is its purpose.
+    if ((state === 1 || state === 3) && !this.mayPlay(index)) player.pauseVideo()
   }
 
-  private start(player: PlayerControl) {
+  private start(index: number, player: PlayerControl, reason: PlayRequestReason) {
     countPlayerWork('playRequests')
-    diagnosticEvent('playRequest', { msSinceGesture: this.msSinceGesture() })
+    diagnosticEvent('playRequest', { index, reason, msSinceGesture: this.msSinceGesture(), msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
     // Explicit product choice: request sound on for each new play request.
     // The browser can still reject sound-on playback; do not fake user activation.
     player.unMute()
     player.playVideo()
   }
 
-  private reconcile() {
+  private reconcile(skipStartFor: number | null = null) {
     if (this.held) {
       // Preparation phase: keep every prepared player paused and never
       // issue a play request, so no autoplay block is generated before
@@ -184,10 +267,10 @@ export class PlaybackCoordinator {
       for (const [, player] of this.players) player.pauseVideo()
       return
     }
-    for (const [index, player] of this.players) if (!this.canPlay(index)) player.pauseVideo()
-    if (this.active !== null && this.visible) {
+    for (const [index, player] of this.players) if (!this.mayPlay(index)) player.pauseVideo()
+    if (this.active !== null && this.visible && this.active !== skipStartFor) {
       const player = this.players.get(this.active)
-      if (player) this.start(player)
+      if (player) this.start(this.active, player, 'reconcile')
     }
   }
 }

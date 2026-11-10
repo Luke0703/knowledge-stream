@@ -95,6 +95,17 @@ it('loads the nearest card during an unsettled scroll without authorizing playba
   expect(players.get(2)!.playVideo).toHaveBeenCalledOnce()
 })
 
+it('requests playback for an entering card past the early threshold before it settles', () => {
+  render(<VideoFeed videos={testVideos} />)
+  position = 1.62 // Card 2 fills 62%: past the 60% early threshold, short of the 65% settle threshold.
+  fireEvent.scroll(screen.getByRole('main', { name: '動画フィード' }))
+  // The first measure promotes card 2 to the load center and mounts its
+  // player; the next measure of the same approach issues the early attempt.
+  fireEvent.scroll(screen.getByRole('main', { name: '動画フィード' }))
+  expect(players.get(2)!.unMute).toHaveBeenCalledOnce()
+  expect(players.get(2)!.playVideo).toHaveBeenCalledOnce()
+})
+
 it.each([true, false])('bounds mounted players over 100 transitions (preload=%s) and releases them on unmount', preloadAdjacent => {
   const view = render(<VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />)
   const retired: PlayerControl[] = []

@@ -11,6 +11,17 @@ export function countPlayerWork(name: string) {
 export function diagnosticEvent(name: string, detail: Record<string, unknown>) {
   if (enabled) console.info('[player-diagnostics]', name, JSON.stringify(detail))
 }
+// Snapshot of the transient-activation state, where the browser exposes
+// it. Round 4's hypothesis is that the YouTube iframe keeps a brief
+// activation from the swipe touch even though the parent page gets none;
+// logging the parent's own userActivation next to each play attempt lets
+// a real-device session separate "parent had activation" from "only the
+// iframe could have had it". Null where the API is unavailable.
+export function userActivationSnapshot(): { isActive: boolean; hasBeenActive: boolean } | null {
+  if (typeof navigator === 'undefined') return null
+  const activation = (navigator as { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation
+  return activation ? { isActive: activation.isActive, hasBeenActive: activation.hasBeenActive } : null
+}
 export function startDiagnostics() {
   if (!enabled) return () => {}
   const started = performance.now()

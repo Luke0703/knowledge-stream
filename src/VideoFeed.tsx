@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
-import { inMountWindow, retainedPlayers, selectActive, visibleRatio } from './player/visibility'
+import { EARLY_PLAY_THRESHOLD, inMountWindow, retainedPlayers, selectActive, visibleRatio } from './player/visibility'
 import { YouTubePlayer } from './player/YouTubePlayer'
 import type { TestVideo } from './videos'
 import { countPlayerWork } from './player/diagnostics'
@@ -49,6 +49,18 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       setActive(next)
       setCenter(previous => samples.reduce((best, sample) =>
         sample.loadRatio > (samples[best]?.loadRatio ?? 0) ? sample.index : best, previous))
+      // Round 4: the entering item that already fills the early share of
+      // the viewport gets its one sound-on attempt NOW, mid-scroll, while
+      // the swipe's touch may still count as activation inside the
+      // YouTube iframe — instead of only after the scroll settles, which
+      // rounds 1–3 showed arrives too late on real devices. The settled
+      // active item is excluded (setActive above already issued its
+      // request), and the coordinator itself dedupes per approach, so
+      // repeated measures during one swipe do not repeat the attempt.
+      const entering = samples
+        .filter(sample => sample.index !== next && sample.cardRatio >= EARLY_PLAY_THRESHOLD)
+        .sort((a, b) => b.cardRatio - a.cardRatio)[0]
+      if (entering) coordinator.attemptEarlyStart(entering.index)
     }
     // Synchronous scroll measurement stops the old video before the next React render.
     measureNow.current = measure
@@ -61,7 +73,17 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // that lands within the gesture window, once per real gesture.
     const stampGestureEnd = () => coordinator.noteUserGesture()
     window.addEventListener('pointerup', stampGestureEnd, { capture: true, passive: true })
-    root.addEventListener('scroll', measure, { passive: true })
+    // The feed's own scroll: stamp the start of each new scroll episode
+    // (a quiet gap separates one swipe from the next) before measuring,
+    // so round-4 diagnostics can time play attempts from the swipe start.
+    let lastScrollAt = Number.NEGATIVE_INFINITY
+    const onFeedScroll = () => {
+      const now = performance.now()
+      if (now - lastScrollAt > 250) coordinator.noteScrollStarted()
+      lastScrollAt = now
+      measure()
+    }
+    root.addEventListener('scroll', onFeedScroll, { passive: true })
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
     // visualViewport events fire continuously during iOS scrolling and
@@ -84,7 +106,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       measureNow.current = null
       window.removeEventListener('pointerdown', unlock, { capture: true })
       window.removeEventListener('pointerup', stampGestureEnd, { capture: true })
-      root.removeEventListener('scroll', measure)
+      root.removeEventListener('scroll', onFeedScroll)
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
       window.visualViewport?.removeEventListener('resize', measureViewport)

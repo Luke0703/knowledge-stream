@@ -1,4 +1,12 @@
 export const ACTIVE_THRESHOLD = 0.65
+// Round 4 (2026-11-10): an entering card that already fills this share of
+// the viewport gets one early sound-on play attempt while the swipe is
+// still moving, instead of waiting for the settle thresholds above. The
+// swipe touch lands inside the YouTube iframe, so the attempt is timed to
+// the moment the iframe itself most plausibly still holds the touch's
+// transient activation. Settle (selectActive) remains the authority for
+// which item is active; see PlaybackCoordinator.attemptEarlyStart.
+export const EARLY_PLAY_THRESHOLD = 0.6
 export interface VisibilitySample { index: number; cardRatio: number; playerRatio: number }
 
 export function selectActive(samples: VisibilitySample[]): number | null {

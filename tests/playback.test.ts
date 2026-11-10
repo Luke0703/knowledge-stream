@@ -211,6 +211,98 @@ describe('playback ownership', () => {
     coordinator.register(0, current)
     expect(listener).toHaveBeenCalledTimes(2)
   })
+  it('issues one early sound-on attempt for the entering player and pauses the current one', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    first.pauseVideo.mockClear(); next.unMute.mockClear(); next.playVideo.mockClear()
+    coordinator.attemptEarlyStart(1) // Mid-scroll: the entering item passed the early threshold.
+    expect(next.unMute).toHaveBeenCalledOnce()
+    expect(next.playVideo).toHaveBeenCalledOnce()
+    expect(next.unMute.mock.invocationCallOrder[0]).toBeLessThan(next.playVideo.mock.invocationCallOrder[0])
+    expect(first.pauseVideo).toHaveBeenCalled() // No overlapping audio while it approaches.
+    coordinator.attemptEarlyStart(1) // Same approach: no second attempt.
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
+  it('keeps an early-started player playing while the scroll is unsettled', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    next.pauseVideo.mockClear()
+    coordinator.onStateChange(1, next, 1) // Its own playing event must not pause it.
+    expect(next.pauseVideo).not.toHaveBeenCalled()
+    coordinator.setActive(null) // Between snaps neither item is active: the early start survives.
+    expect(next.pauseVideo).not.toHaveBeenCalled()
+  })
+  it('does not duplicate the start at settle when the early attempt already reached playback', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    coordinator.onStateChange(1, next, 3) // Buffering: the early attempt is working.
+    next.playVideo.mockClear()
+    coordinator.setActive(1) // Promotion: no second request for a player already starting.
+    expect(next.playVideo).not.toHaveBeenCalled()
+    expect(coordinator.canPlay(1)).toBe(true)
+  })
+  it('retries a blocked early attempt exactly once more, at settle', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    expect(next.playVideo).toHaveBeenCalledOnce()
+    coordinator.onAutoplayBlocked(1) // Blocked mid-scroll: recorded only, no early retry is spent.
+    expect(next.playVideo).toHaveBeenCalledOnce()
+    coordinator.setActive(1) // Settle: the one remaining try.
+    expect(next.playVideo).toHaveBeenCalledTimes(2)
+    coordinator.onAutoplayBlocked(1) // Blocked again, with no parent-side gesture to spend: it waits.
+    expect(next.playVideo).toHaveBeenCalledTimes(2)
+  })
+  it('abandons the early attempt when the scroll settles back on the previous item', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    coordinator.onStateChange(1, next, 1)
+    next.pauseVideo.mockClear()
+    coordinator.setActive(null) // Mid-scroll: neither item is active, the early start survives.
+    expect(next.pauseVideo).not.toHaveBeenCalled()
+    coordinator.setActive(0) // Settled back on the previous item: the early player is paused again.
+    expect(next.pauseVideo).toHaveBeenCalled()
+    coordinator.attemptEarlyStart(1) // A fresh approach may try again.
+    expect(next.playVideo).toHaveBeenCalledTimes(2)
+  })
+  it('refuses early attempts while held, hidden, for the active item, or before readiness', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    next.playVideo.mockClear()
+    coordinator.attemptEarlyStart(0) // Already the active item: the settle path owns it.
+    expect(first.playVideo).toHaveBeenCalledOnce() // Only the register/settle start from setup.
+    coordinator.setVisible(false)
+    coordinator.attemptEarlyStart(1)
+    expect(next.playVideo).not.toHaveBeenCalled()
+    coordinator.setVisible(true)
+    coordinator.attemptEarlyStart(2) // No such player registered.
+    expect(next.playVideo).not.toHaveBeenCalled()
+    const held = new PlaybackCoordinator(), heldNext = player()
+    held.setHeld(true)
+    held.register(0, player()); held.register(1, heldNext)
+    held.setActive(0)
+    held.attemptEarlyStart(1) // Preparation hold: no play request may leave before the decisive tap.
+    expect(heldNext.playVideo).not.toHaveBeenCalled()
+  })
+  it('starts the entering player on a later measure once it registers mid-approach', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1) // Not registered yet: nothing to send to.
+    coordinator.register(1, next) // Registers paused (not active, no early marker yet).
+    expect(next.playVideo).not.toHaveBeenCalled()
+    coordinator.attemptEarlyStart(1) // The feed re-calls on the next measure of the same scroll.
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
   it('pauses while hidden or between snaps, and does not restart on unchanged measurements', () => {
     const coordinator = new PlaybackCoordinator(), current = player()
     coordinator.setActive(0); coordinator.register(0, current)

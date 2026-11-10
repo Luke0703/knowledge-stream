@@ -294,3 +294,37 @@ iframe再生成の削減は確認できましたが、**利用者が報告した
 切り分け結論: **本物のタップが駆動する再生（開始タップ、前へ／次へボタン）は全て成功し、残るのはスワイプ着地だけ**である。スワイプ側が効かない主因は、スワイプのタッチが別オリジンの YouTube iframe 上で完結し、親側にジェスチャー（transient activation）が残らないためとみられる（これは推測であり、計測で確定したものではない）。スワイプ着地が直ったとは書かない。現状のままでは、スワイプで移動した先の動画は外側の「再生する」ボタンのタップが要る。
 
 未決事項: スワイプ着地を第4ラウンドで追うか、ボタン主導のナビゲーションを区切りとするかは、利用者の判断待ち。
+
+## 2026-11-10：第4ラウンド — スワイプの最中、進入側が過半を占めた時点で再生要求を出す
+
+利用者は 2026-11-10 に「B：第4ラウンドに挑む」を選択した。対象はスワイプ着地のみ（開始タップと前へ／次へボタンは第3ラウンドで解決済み）。
+
+### 主仮説（1本に絞る）
+
+スワイプのタッチは YouTube iframe 自身が受けているため、iframe 側には短時間の transient activation が存在するはずである。第3ラウンドまでの着地後（settle 後）の再生要求は、その有効期間を過ぎてから届いていた可能性が高い。よって、**着地を待たず、スクロール中に進入側アイテムが画面の過半を占めた時点で、そのプレーヤーへ unMute+playVideo を即発行する**。ブロックされた場合のみ、着地時にもう1回だけ試す。
+
+過去の失敗との区別: 第1・2ラウンドは「親側のジェスチャー刻印＋ブロック後の事後リトライ」であり、activation の回復を狙うものだった。今回は回復ではなく、**iframe 側に activation が残っているうちに要求を前倒しする**ことが本質である。疑似タップ・合成イベントは使っていない。要求内容は従来と同一（unMute→playVideo）で、タイミングだけを変えた。
+
+### 今回の変更
+
+| ファイル | 変更と理由 |
+| --- | --- |
+| `src/player/visibility.ts` | `EARLY_PLAY_THRESHOLD = 0.6` を追加。着地判定（カード65%＋プレーヤー50%）とは別の、早期試行専用のしきい値 |
+| `src/VideoFeed.tsx` | measure 内で「active ではないが cardRatio ≥ 0.6 の進入側候補」を検出し、`coordinator.attemptEarlyStart(index)` を呼ぶ。着地済み（selectActive の結果）は除外。あわせてフィードのスクロール開始（250ms の静止を挟んだ最初の scroll イベント）を `coordinator.noteScrollStarted()` で刻印し、試行タイミングをスワイプ開始基準で測れるようにした |
+| `src/player/PlaybackCoordinator.ts` | `attemptEarlyStart(index)` を追加。進入側プレーヤーを「early」として保持し、着地するまで reconcile や自身の再生状態イベントで落とされないようにした（`mayPlay`）。アプローチごとに1回だけ発行し、他のプレーヤーは先に pause する（同時音声なし）。ブロックされた early 試行は記録のみに留め、ジェスチャー窓リトライには回さない（着地時の1回を温存）。着地して active 化した時点で、既に再生／バッファリングに到達していれば二重発行を抑止し、ブロックされていた場合のみ reconcile がもう1回発行する。準備ホールド中・非表示時・未 ready 時・active 自身には発行しない。未 ready で呼ばれた場合は early として記録せず、次の measure で再試行できる |
+| `src/player/diagnostics.ts`、`src/player/PlaybackCoordinator.ts` | `?diagnostics=1` の即時ログを拡張。全ての再生要求（`playRequest`）に理由（`early-threshold` / `reconcile` / `register` / `start-gesture` / `blocked-retry` / `gesture-retry` / `explicit-play`）、対象 index、スクロール開始からの経過 ms、直近ジェスチャーからの経過 ms、`navigator.userActivation`（`isActive` / `hasBeenActive`、取得できる環境のみ）を併記。`earlyPlayAttempt` と `autoplayBlocked` にも同じ時刻・activation 情報を載せ、今夜の実機テストで「しきい値到達時の試行が何ms時点だったか／ブロックが何ms時点だったか／その時親側に activation があったか」を切り分けられるようにした |
+| `tests/playback.test.ts`、`tests/feed.test.tsx` | 早期試行の1回性・現在動画の先行 pause・未着地での維持・再生到達時の着地二重発行抑止・ブロック時の着地1回だけ再試行・逆方向に着地した場合の破棄・ホールド／非表示／未 ready の拒否・途中 ready 化後の再試行に7件、フィード側で 62% 時点（着地しきい値未満）で早期試行が発行されることに1件を追加 |
+
+### 検証と限界（実機未確認の明記）
+
+- 型チェック・build 成功。自動テストは **6ファイル73件成功**（従来65件＋新規8件）。
+- **この第4ラウンドは iPhone 実機では未確認**である。直ったと主張しない。実機確認は今夜、利用者と行う。
+- 残る不確実性: (1) iframe 側の transient activation が cross-origin の postMessage 経由の `playVideo()` に効くかは仕様上保証されず、実機でのみ確定する。(2) スクロールイベントと measure の間隔は端末負荷で変わるため、0.6 到達から要求までの遅延は実機でばらつく。(3) 親側 `navigator.userActivation` は親ページ自身の activation を示すもので、iframe 側の状態を直接観測する手段はない（仮説の成否は再生の成否とタイミングの相関から判断する）。
+
+### 今夜の実機確認手順
+
+1. PC で `git pull` → `pnpm build` → preview を再起動し、iPhone で通常 URL を開く（再読み込みして最新ビルドであることを確認）。
+2. 開始タップで1本目が音声つきで始まること（第3ラウンドの到達点の回帰確認）。
+3. **本題**: 1本目から2本目へ、ゆっくりではなく通常の速さでスワイプし、着地後に音声つきで再生が始まるかを見る。「再生する」ボタンに触らずに始まれば成功。2→3、3→2（逆方向）も同様に試す。
+4. 失敗した場合は、同じ端末でもう一度 `?diagnostics=1` 付き URL で開き、同じスワイプをして、(a) ブロック表示が出たか、(b) スワイプの速さ（速い／ゆっくり）を記録する。コンソールログを PC 側で読める場合は `earlyPlayAttempt` → `playRequest (reason=early-threshold)` → `autoplayBlocked` の msSinceScrollStart の並びを確認する: early 試行が着地（reconcile）より十分前に出ているのにブロックされるなら、iframe 側 activation の前倒しでも届かなかったことになる。
+5. 前へ／次へボタンでの移動が従来どおり音声つきで再生されること（回帰確認）。
