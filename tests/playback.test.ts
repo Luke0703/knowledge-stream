@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PlaybackCoordinator } from '../src/player/PlaybackCoordinator'
-import { inMountWindow, retainedPlayers, selectActive } from '../src/player/visibility'
+import { decideSwipeTarget, inMountWindow, retainedPlayers, selectActive } from '../src/player/visibility'
 
 const player = () => ({ pauseVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn(), playVideo: vi.fn(), seekTo: vi.fn() })
 
@@ -319,6 +319,126 @@ describe('playback ownership', () => {
     coordinator.unregister(0, current)
     coordinator.setActive(0)
     expect(current.playVideo).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('swipe target decision (round 6)', () => {
+  it('stays on the current card when the projected landing is still nearest to it', () => {
+    expect(decideSwipeTarget(0, 0.2, 3)).toBe(0)
+    expect(decideSwipeTarget(0, 0.49, 3)).toBe(0)
+    expect(decideSwipeTarget(1, 1.4, 3)).toBe(1)
+  })
+  it('advances or retreats to the projected snap target', () => {
+    expect(decideSwipeTarget(0, 0.5, 3)).toBe(1)
+    expect(decideSwipeTarget(0, 0.9, 3)).toBe(1)
+    expect(decideSwipeTarget(1, 0.4, 3)).toBe(0)
+    expect(decideSwipeTarget(1, 1.6, 3)).toBe(2)
+  })
+  it('moves at most one card per gesture and stays inside the feed', () => {
+    expect(decideSwipeTarget(0, 2.9, 3)).toBe(1)
+    expect(decideSwipeTarget(2, -1, 3)).toBe(1)
+    expect(decideSwipeTarget(2, 2.9, 3)).toBe(2)
+    expect(decideSwipeTarget(0, -0.9, 3)).toBe(0)
+  })
+})
+
+describe('swipe commit at gesture end (round 6)', () => {
+  it('issues the sound-on start for the committed target and pauses the others', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    first.pauseVideo.mockClear(); next.unMute.mockClear(); next.playVideo.mockClear()
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1) // Called synchronously from the gesture-end handler.
+    expect(next.unMute).toHaveBeenCalledOnce()
+    expect(next.playVideo).toHaveBeenCalledOnce()
+    expect(next.unMute.mock.invocationCallOrder[0]).toBeLessThan(next.playVideo.mock.invocationCallOrder[0])
+    expect(first.pauseVideo).toHaveBeenCalled()
+    expect(coordinator.canPlay(1)).toBe(true)
+  })
+  it('commits once per scroll episode even when several end events fire, then allows the next episode', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), first = player(), next = player(), third = player()
+      coordinator.register(0, first); coordinator.register(1, next); coordinator.register(2, third)
+      coordinator.setActive(0)
+      coordinator.noteScrollStarted() // The swipe's episode begins.
+      coordinator.commitSwipeTarget(1) // pointerup
+      coordinator.commitSwipeTarget(1) // touchend for the same physical gesture: no second request.
+      expect(next.playVideo).toHaveBeenCalledOnce()
+      now += 1000
+      coordinator.noteScrollStarted() // A new swipe: a new episode.
+      coordinator.commitSwipeTarget(2)
+      expect(third.playVideo).toHaveBeenCalledOnce()
+      expect(next.pauseVideo).toHaveBeenCalled() // The previously committed player yields.
+    } finally { vi.restoreAllMocks() }
+  })
+  it('does not duplicate the start when the early attempt for the same target already reached playback', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    coordinator.onStateChange(1, next, 3) // Buffering: the early attempt is working.
+    next.playVideo.mockClear()
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1) // Promotion, not a second request.
+    expect(next.playVideo).not.toHaveBeenCalled()
+    expect(coordinator.canPlay(1)).toBe(true)
+  })
+  it('spends the gesture on the commit: a block of the committed request waits for the next genuine gesture', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+      coordinator.register(0, first); coordinator.register(1, next)
+      coordinator.setActive(0)
+      coordinator.noteScrollStarted()
+      coordinator.commitSwipeTarget(1)
+      expect(next.playVideo).toHaveBeenCalledOnce()
+      coordinator.onAutoplayBlocked(1) // The committed request was blocked anyway.
+      expect(next.playVideo).toHaveBeenCalledOnce() // No instant gesture-window re-fire: the commit was this gesture's try.
+      now += 4000
+      coordinator.handleUserGesture() // A genuinely new tap retries the recorded block.
+      expect(next.playVideo).toHaveBeenCalledTimes(2)
+    } finally { vi.restoreAllMocks() }
+  })
+  it('keeps the committed player playable between snaps and pauses it when the snap lands elsewhere', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    next.pauseVideo.mockClear()
+    coordinator.setActive(null) // Intermediate measure during the remaining snap motion.
+    expect(next.pauseVideo).not.toHaveBeenCalled()
+    coordinator.setActive(0) // The snap landed back on the previous item after all.
+    expect(next.pauseVideo).toHaveBeenCalled()
+  })
+  it('refuses to commit while held or hidden', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.setVisible(false)
+    coordinator.commitSwipeTarget(1)
+    expect(next.playVideo).not.toHaveBeenCalled()
+    const held = new PlaybackCoordinator(), heldNext = player()
+    held.setHeld(true)
+    held.register(0, player()); held.register(1, heldNext)
+    held.setActive(0)
+    held.commitSwipeTarget(1) // Preparation hold: the decisive tap owns the first start.
+    expect(heldNext.playVideo).not.toHaveBeenCalled()
+  })
+  it('still loops the committed active video when it ends', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    next.playVideo.mockClear(); next.unMute.mockClear()
+    coordinator.onStateChange(1, next, 0) // ENDED: round 5's loop still applies to the committed item.
+    expect(next.seekTo).toHaveBeenCalledWith(0, true)
+    expect(next.playVideo).toHaveBeenCalledOnce()
   })
 })
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
-import { EARLY_PLAY_THRESHOLD, inMountWindow, retainedPlayers, selectActive, visibleRatio } from './player/visibility'
+import { decideSwipeTarget, EARLY_PLAY_THRESHOLD, inMountWindow, retainedPlayers, selectActive, SWIPE_PROJECTION_MS, visibleRatio } from './player/visibility'
 import { YouTubePlayer } from './player/YouTubePlayer'
 import type { TestVideo } from './videos'
 import { countPlayerWork } from './player/diagnostics'
@@ -76,13 +76,74 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // The feed's own scroll: stamp the start of each new scroll episode
     // (a quiet gap separates one swipe from the next) before measuring,
     // so round-4 diagnostics can time play attempts from the swipe start.
-    let lastScrollAt = Number.NEGATIVE_INFINITY
+    // Round 6 (2026-11-11) also tracks the episode's scroll offsets so
+    // the gesture's end can decide the navigation (see onGestureEnd).
+    const EPISODE_GAP_MS = 250
+    const VELOCITY_WINDOW_MS = 120
+    const VELOCITY_CLAMP_PX_PER_MS = 3
+    interface SwipeGesture { startOffset: number; samples: { offset: number; at: number }[]; handled: boolean }
+    let gesture: SwipeGesture | null = null
+    const gestureLive = (now: number) =>
+      gesture !== null && now - gesture.samples[gesture.samples.length - 1].at <= EPISODE_GAP_MS
+    const beginGesture = (now: number) => {
+      gesture = { startOffset: root.scrollTop, samples: [{ offset: root.scrollTop, at: now }], handled: false }
+      coordinator.noteScrollStarted()
+    }
+    const beginGestureFromPointer = () => {
+      const now = performance.now()
+      if (!gestureLive(now)) beginGesture(now)
+    }
     const onFeedScroll = () => {
       const now = performance.now()
-      if (now - lastScrollAt > 250) coordinator.noteScrollStarted()
-      lastScrollAt = now
+      if (!gestureLive(now)) beginGesture(now)
+      else if (gesture) {
+        gesture.samples.push({ offset: root.scrollTop, at: now })
+        if (gesture.samples.length > 8) gesture.samples.shift()
+      }
       measure()
     }
+    // Round 6: decide the swipe INSIDE the gesture-end handler, while
+    // the genuine gesture's transient activation is still alive, instead
+    // of waiting for the scroll to settle (rounds 1–4: settle-time
+    // requests arrive after the activation expired; Safari blocked at
+    // every speed). The predicted target comes from the swipe's travel
+    // plus its release velocity projected a short way forward — the
+    // point the native scroll-snap is heading for. The visual landing
+    // itself is left to that native snap: forcing scrollTop mid-
+    // momentum could fight it, and when prediction and landing disagree
+    // the ordinary settle path (setActive in measure) still corrects.
+    // A gesture that does not pass the commit point snaps back with no
+    // play request, exactly as before.
+    const onGestureEnd = () => {
+      if (!gesture || gesture.handled) return
+      gesture.handled = true
+      const cardSize = root.getBoundingClientRect().height // Cards are exactly the feed's height.
+      if (cardSize <= 0) return
+      const startIndex = Math.min(videos.length - 1, Math.max(0, Math.round(gesture.startOffset / cardSize)))
+      const samples = gesture.samples
+      const last = samples[samples.length - 1]
+      const windowFirst = samples.find(sample => sample.at >= last.at - VELOCITY_WINDOW_MS) ?? last
+      let velocity = 0
+      if (last.at > windowFirst.at) {
+        velocity = Math.min(VELOCITY_CLAMP_PX_PER_MS, Math.max(-VELOCITY_CLAMP_PX_PER_MS,
+          (last.offset - windowFirst.offset) / (last.at - windowFirst.at)))
+      }
+      const projected = root.scrollTop + velocity * SWIPE_PROJECTION_MS
+      const target = decideSwipeTarget(startIndex, projected / cardSize, videos.length)
+      if (target !== startIndex) coordinator.commitSwipeTarget(target)
+    }
+    // Pointer events cover touch and mouse uniformly; the touchend /
+    // touchcancel listeners are the fallback for browsers that route a
+    // scroll gesture's end only through the touch stream. The
+    // coordinator dedupes a commit per scroll episode, and `handled`
+    // dedupes here, so several end events for one gesture are safe.
+    // A mouse drag does not scroll the feed natively, so its travel is
+    // zero and it simply never commits — desktop behaviour is unchanged.
+    window.addEventListener('pointerdown', beginGestureFromPointer, { capture: true })
+    window.addEventListener('pointerup', onGestureEnd, { capture: true })
+    window.addEventListener('pointercancel', onGestureEnd, { capture: true })
+    window.addEventListener('touchend', onGestureEnd, { capture: true })
+    window.addEventListener('touchcancel', onGestureEnd, { capture: true })
     root.addEventListener('scroll', onFeedScroll, { passive: true })
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
@@ -106,6 +167,11 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       measureNow.current = null
       window.removeEventListener('pointerdown', unlock, { capture: true })
       window.removeEventListener('pointerup', stampGestureEnd, { capture: true })
+      window.removeEventListener('pointerdown', beginGestureFromPointer, { capture: true })
+      window.removeEventListener('pointerup', onGestureEnd, { capture: true })
+      window.removeEventListener('pointercancel', onGestureEnd, { capture: true })
+      window.removeEventListener('touchend', onGestureEnd, { capture: true })
+      window.removeEventListener('touchcancel', onGestureEnd, { capture: true })
       root.removeEventListener('scroll', onFeedScroll)
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)

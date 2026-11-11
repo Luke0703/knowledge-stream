@@ -106,6 +106,48 @@ it('requests playback for an entering card past the early threshold before it se
   expect(players.get(2)!.playVideo).toHaveBeenCalledOnce()
 })
 
+it('commits the swipe target inside the gesture-end handler, before any settle', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  // The swipe stays below the 65% settle and 60% early thresholds while
+  // it moves, but leaves with enough velocity to carry the snap to the
+  // next card: no request may fire during the scroll itself…
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed)
+  position = 0.55; feed.scrollTop = 330
+  fireEvent.scroll(feed)
+  expect(next.playVideo).not.toHaveBeenCalled()
+  // …and the commit lands synchronously in the gesture-end turn.
+  act(() => {
+    fireEvent.pointerUp(window)
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
+  expect(next.unMute).toHaveBeenCalledOnce()
+})
+
+it('commits only once when one gesture ends through several event types', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed)
+  position = 0.55; feed.scrollTop = 330
+  fireEvent.scroll(feed)
+  fireEvent.pointerUp(window)
+  fireEvent.touchEnd(window) // The same physical gesture's second end event.
+  expect(next.playVideo).toHaveBeenCalledOnce()
+})
+
+it('does not commit when a short, slow swipe will snap back', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  position = 0.2; feed.scrollTop = 120
+  fireEvent.scroll(feed)
+  fireEvent.pointerUp(window)
+  expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+})
+
 it.each([true, false])('bounds mounted players over 100 transitions (preload=%s) and releases them on unmount', preloadAdjacent => {
   const view = render(<VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} />)
   const retired: PlayerControl[] = []

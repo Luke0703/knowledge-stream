@@ -7,6 +7,27 @@ export const ACTIVE_THRESHOLD = 0.65
 // transient activation. Settle (selectActive) remains the authority for
 // which item is active; see PlaybackCoordinator.attemptEarlyStart.
 export const EARLY_PLAY_THRESHOLD = 0.6
+// Round 6 (2026-11-11): at the end of a swipe gesture the feed projects
+// the scroll offset this far past the release point (release offset plus
+// release velocity times this horizon) to predict where the native
+// scroll-snap will land, so the navigation decision can be made — and
+// the play request issued — inside the gesture-end handler itself,
+// while the gesture's transient activation is still alive, instead of
+// after the snap animation settles (rounds 1–4 showed settle-time
+// requests arrive too late, Safari at every speed). The horizon and the
+// feed's velocity clamp are estimates; the settle path stays as the
+// correction if the prediction and the actual landing disagree.
+export const SWIPE_PROJECTION_MS = 150
+
+// The snap target a swipe is heading for: the nearest snap index to the
+// projected position, clamped to the feed bounds and to one card per
+// gesture (the cards use scroll-snap-stop: always, so the browser
+// itself never carries a single swipe further than one card).
+export function decideSwipeTarget(startIndex: number, projectedCards: number, count: number): number {
+  if (count <= 0) return startIndex
+  const landed = Math.min(count - 1, Math.max(0, Math.round(projectedCards)))
+  return Math.min(startIndex + 1, Math.max(startIndex - 1, landed))
+}
 export interface VisibilitySample { index: number; cardRatio: number; playerRatio: number }
 
 export function selectActive(samples: VisibilitySample[]): number | null {
