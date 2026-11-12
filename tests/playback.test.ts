@@ -442,6 +442,95 @@ describe('swipe commit at gesture end (round 6)', () => {
   })
 })
 
+describe('settle commit (round 7)', () => {
+  it('issues the sound-on start for the settled target and pauses the others', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    first.pauseVideo.mockClear(); next.unMute.mockClear(); next.playVideo.mockClear()
+    coordinator.noteScrollStarted()
+    coordinator.commitSettleTarget(1) // Called from the scroll-settle handler.
+    expect(next.unMute).toHaveBeenCalledOnce()
+    expect(next.playVideo).toHaveBeenCalledOnce()
+    expect(next.unMute.mock.invocationCallOrder[0]).toBeLessThan(next.playVideo.mock.invocationCallOrder[0])
+    expect(first.pauseVideo).toHaveBeenCalled()
+    expect(coordinator.canPlay(1)).toBe(true)
+  })
+  it('commits once per scroll episode across both paths, in either order', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), first = player(), next = player(), third = player()
+      coordinator.register(0, first); coordinator.register(1, next); coordinator.register(2, third)
+      coordinator.setActive(0)
+      coordinator.noteScrollStarted()
+      coordinator.commitSettleTarget(1) // Settle fires first.
+      coordinator.commitSwipeTarget(1) // The gesture end arrives late: no second request.
+      expect(next.playVideo).toHaveBeenCalledOnce()
+      now += 1000
+      coordinator.noteScrollStarted() // A new swipe: a new episode.
+      coordinator.commitSwipeTarget(2) // Gesture end fires first this time.
+      coordinator.commitSettleTarget(2) // Settle for the same episode: no second request.
+      expect(third.playVideo).toHaveBeenCalledOnce()
+      expect(next.pauseVideo).toHaveBeenCalled() // The previously committed player yields.
+    } finally { vi.restoreAllMocks() }
+  })
+  it('does not duplicate the start when the early attempt for the same target already reached playback', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    coordinator.onStateChange(1, next, 3) // Buffering: the early attempt is working.
+    next.playVideo.mockClear()
+    coordinator.noteScrollStarted()
+    coordinator.commitSettleTarget(1) // Promotion, not a second request.
+    expect(next.playVideo).not.toHaveBeenCalled()
+    expect(coordinator.canPlay(1)).toBe(true)
+  })
+  it('spends the gesture on the settle commit: a block waits for the next genuine gesture', () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+      coordinator.register(0, first); coordinator.register(1, next)
+      coordinator.setActive(0)
+      coordinator.noteScrollStarted()
+      coordinator.commitSettleTarget(1)
+      expect(next.playVideo).toHaveBeenCalledOnce()
+      coordinator.onAutoplayBlocked(1) // The settle request was blocked anyway.
+      expect(next.playVideo).toHaveBeenCalledOnce() // No instant gesture-window re-fire: the commit was this gesture's try.
+      now += 4000
+      coordinator.handleUserGesture() // A genuinely new tap retries the recorded block.
+      expect(next.playVideo).toHaveBeenCalledTimes(2)
+    } finally { vi.restoreAllMocks() }
+  })
+  it('refuses to commit at settle while held or hidden', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.setVisible(false)
+    coordinator.commitSettleTarget(1)
+    expect(next.playVideo).not.toHaveBeenCalled()
+    const held = new PlaybackCoordinator(), heldNext = player()
+    held.setHeld(true)
+    held.register(0, player()); held.register(1, heldNext)
+    held.setActive(0)
+    held.commitSettleTarget(1) // Preparation hold: the decisive tap owns the first start.
+    expect(heldNext.playVideo).not.toHaveBeenCalled()
+  })
+  it('still loops the settled active video when it ends', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSettleTarget(1)
+    next.playVideo.mockClear(); next.unMute.mockClear()
+    coordinator.onStateChange(1, next, 0) // ENDED: round 5's loop still applies to the settled item.
+    expect(next.seekTo).toHaveBeenCalledWith(0, true)
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
+})
+
 describe('loop playback (round 5)', () => {
   it('restarts the settled active video from the beginning when it ends', () => {
     const coordinator = new PlaybackCoordinator(), current = player()

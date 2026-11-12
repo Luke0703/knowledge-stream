@@ -3,7 +3,7 @@ export type PlayerControl = Pick<YT.Player, 'pauseVideo' | 'playVideo' | 'mute' 
 // Why a play request was issued, recorded in diagnostics so a device
 // session can tell the round-4 early (mid-scroll) attempt apart from the
 // settle-time one and from the older gesture paths.
-type PlayRequestReason = 'reconcile' | 'register' | 'start-gesture' | 'blocked-retry' | 'gesture-retry' | 'explicit-play' | 'early-threshold' | 'loop' | 'touchend-commit'
+type PlayRequestReason = 'reconcile' | 'register' | 'start-gesture' | 'blocked-retry' | 'gesture-retry' | 'explicit-play' | 'early-threshold' | 'loop' | 'touchend-commit' | 'settle-commit'
 
 // One synchronous authority: pause old players before starting a new one.
 // React state/async onReady callbacks are not trusted as playback eligibility.
@@ -46,15 +46,18 @@ export class PlaybackCoordinator {
   // Start of the current scroll episode, stamped by the feed, so
   // diagnostics can place each attempt on the swipe's own clock.
   private scrollStartedAt: number | null = null
-  // Round 6 (2026-11-11): the last swipe commit issued from a gesture-end
-  // handler, keyed by the scroll episode it belonged to. One physical
-  // gesture can surface as several end events (pointerup AND touchend,
-  // on some browsers also a cancel), and the commit for an episode must
-  // happen exactly once; a later episode re-stamps scrollStartedAt, so
-  // the key stops matching and the next swipe may commit again. This
-  // reuses the episode stamp the feed already maintains for diagnostics
-  // instead of adding a parallel gesture counter.
-  private lastSwipeCommit: { index: number; episodeAt: number | null } | null = null
+  // Round 6 (2026-11-11) + Round 7 (2026-11-13): the last commit issued
+  // for a scroll episode, keyed by the episode it belonged to — from the
+  // gesture-end handler (round 6) or from the scroll-settle handler
+  // (round 7). One physical gesture can surface as several end events
+  // (pointerup AND touchend, on some browsers also a cancel), and the
+  // settle detection can fire after the gesture end; the commit for an
+  // episode must happen exactly once, whichever path reaches it first.
+  // A later episode re-stamps scrollStartedAt, so the key stops matching
+  // and the next swipe may commit again. This reuses the episode stamp
+  // the feed already maintains for diagnostics instead of adding a
+  // parallel gesture counter.
+  private lastCommit: { index: number; episodeAt: number | null } | null = null
 
   setActive(index: number | null) {
     if (this.active === index) return
@@ -167,19 +170,31 @@ export class PlaybackCoordinator {
     this.start(index, player, 'early-threshold')
   }
 
-  // Round 6 (2026-11-11): the swipe commit. The feed predicts the snap
-  // target from the swipe's distance and release velocity and calls this
-  // synchronously from the gesture-end handler (pointerup / touchend),
-  // while that genuine gesture's transient activation is still alive in
-  // the parent document — the same proven shape as the start tap and
-  // the prev/next buttons (round 3), whose requests the browsers accept,
-  // unlike settle-time requests issued after the snap animation ends.
-  // No synthetic gesture is involved: this is the identical unMute +
-  // playVideo request, issued at gesture end instead of at settle.
+  // Round 6 (2026-11-11): the swipe commit, called synchronously from
+  // the gesture-end handler (pointerup / touchend) while that genuine
+  // gesture's transient activation is still alive in the parent
+  // document — the same proven shape as the start tap and the prev/next
+  // buttons (round 3), whose requests the browsers accept, unlike
+  // settle-time requests issued after the snap animation ends.
+  //
+  // Round 7 (2026-11-13): the same commit, called from the scroll-settle
+  // handler instead. On a real iPhone the gesture-end path never fires —
+  // the YouTube iframe captures the touch, so the parent never sees
+  // pointerup/touchend (verified 2026-11-13: swipeCommit 0 of 11 events
+  // on device) — and the scroll stopping is the only reliable
+  // "the swipe finished" signal the parent can see. The settle commit's
+  // request is issued after the gesture, so it may still be blocked;
+  // the bet is the round-4 early attempt, fired mid-scroll inside the
+  // iframe's own activation, so the settle commit mostly promotes or
+  // keeps that playback instead of starting from cold. No synthetic
+  // gesture is involved either way: this is the identical unMute +
+  // playVideo request, issued at gesture end or at settle.
   //
   // Bookkeeping, deliberately shared with the existing paths:
-  // - One commit per scroll episode and target (see lastSwipeCommit):
-  //   the several end events of one physical gesture do not re-issue.
+  // - One commit per scroll episode and target (see lastCommit):
+  //   the several end events of one physical gesture, and the settle
+  //   detection firing after them, do not re-issue. Whichever path
+  //   reaches the commit first wins.
   // - The commit spends this gesture's retry entitlement up front
   //   (gestureRetryStamp), so if the committed request is itself
   //   blocked, the block is recorded and waits for the NEXT genuine
@@ -188,17 +203,25 @@ export class PlaybackCoordinator {
   // - The target becomes active immediately and is also marked as the
   //   early item, so it stays playable through the remaining snap
   //   motion: intermediate measures that report no active item must not
-  //   pause what the gesture-end request just started, and the settle
-  //   measure's setActive(same index) is a no-op — no duplicate request.
+  //   pause what the commit just started, and the settle measure's
+  //   setActive(same index) is a no-op — no duplicate request.
   //   If the snap lands elsewhere after all, that setActive clears the
   //   marker and reconcile pauses the committed player again.
   commitSwipeTarget(index: number) {
-    if (this.lastSwipeCommit?.index === index && this.lastSwipeCommit.episodeAt === this.scrollStartedAt) return
+    this.commitTarget(index, 'touchend-commit')
+  }
+
+  commitSettleTarget(index: number) {
+    this.commitTarget(index, 'settle-commit')
+  }
+
+  private commitTarget(index: number, kind: 'touchend-commit' | 'settle-commit') {
+    if (this.lastCommit?.index === index && this.lastCommit.episodeAt === this.scrollStartedAt) return
     if (this.held || !this.visible) return
     if (index === this.active && this.earlyIndex !== index) return // Already the settled item: nothing to commit.
     this.noteUserGesture()
-    this.lastSwipeCommit = { index, episodeAt: this.scrollStartedAt }
-    diagnosticEvent('swipeCommit', { index, msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
+    this.lastCommit = { index, episodeAt: this.scrollStartedAt }
+    diagnosticEvent(kind === 'touchend-commit' ? 'swipeCommit' : 'settleCommit', { index, msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
     if (index === this.earlyIndex && this.earlyPlaying) {
       // The round-4 early attempt for this same target already reached
       // playback/buffering: promote it without a duplicate request,
@@ -216,7 +239,7 @@ export class PlaybackCoordinator {
     const player = this.players.get(index)
     if (player) {
       this.blockedByAutoplay.delete(index)
-      this.start(index, player, 'touchend-commit')
+      this.start(index, player, kind)
     }
     // Not ready yet: the markers above arm the target, and register()
     // issues the request when the player arrives (it may still be

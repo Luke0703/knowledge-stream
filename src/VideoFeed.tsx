@@ -24,8 +24,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
   useEffect(() => {
     const root = viewport.current
     if (!root) return
-    const measure = () => {
-      countPlayerWork('measure')
+    const computeSettled = () => {
       const bounds = root.getBoundingClientRect()
       // Intersection includes viewport clipping (small screens/zoom/URL bar changes).
       const clipped = new DOMRect(Math.max(0, bounds.left), Math.max(0, bounds.top),
@@ -41,7 +40,11 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
           playerRatio: visibleRatio(card.querySelector('.player-surface')!.getBoundingClientRect(), clipped),
         }
       })
-      const next = selectActive(samples)
+      return { samples, next: selectActive(samples) }
+    }
+    const measure = () => {
+      countPlayerWork('measure')
+      const { samples, next } = computeSettled()
       const visible = document.visibilityState === 'visible'
       if (!visible) coordinator.setVisible(false)
       coordinator.setActive(next)
@@ -85,7 +88,18 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     let gesture: SwipeGesture | null = null
     const gestureLive = (now: number) =>
       gesture !== null && now - gesture.samples[gesture.samples.length - 1].at <= EPISODE_GAP_MS
+    // Round 7 settle timers (see onSettle below). A new scroll episode
+    // invalidates any settle still pending from the previous one.
+    let settleTimer: number | null = null
+    let settleRafFirst: number | null = null
+    let settleRafSecond: number | null = null
+    const clearSettleTimers = () => {
+      if (settleTimer !== null) { clearTimeout(settleTimer); settleTimer = null }
+      if (settleRafFirst !== null) { cancelAnimationFrame(settleRafFirst); settleRafFirst = null }
+      if (settleRafSecond !== null) { cancelAnimationFrame(settleRafSecond); settleRafSecond = null }
+    }
     const beginGesture = (now: number) => {
+      clearSettleTimers()
       gesture = { startOffset: root.scrollTop, samples: [{ offset: root.scrollTop, at: now }], handled: false }
       coordinator.noteScrollStarted()
     }
@@ -93,6 +107,54 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       const now = performance.now()
       if (!gestureLive(now)) beginGesture(now)
     }
+    // Round 7 (2026-11-13): commit at scroll settle. On a real iPhone
+    // the gesture-end path never fires (the iframe keeps the touch), so
+    // the scroll stopping is the only reliable "the swipe finished"
+    // signal the parent can see. Two sources feed one handler: the
+    // native 'scrollend' event where the browser supports it, and a
+    // stillness fallback (~150 ms with no scroll event and scrollTop
+    // stable across two animation frames) for browsers without it. The
+    // stillness fallback additionally requires the feed to rest at a
+    // snap point: a finger paused mid-swipe holds the card between
+    // cards and must not commit before the swipe finishes.
+    const SETTLE_STILLNESS_MS = 150
+    const SETTLE_SNAP_EPSILON_PX = 4
+    const onSettle = () => {
+      clearSettleTimers()
+      if (!gesture || gesture.handled) return
+      gesture.handled = true
+      const cardSize = root.getBoundingClientRect().height // Cards are exactly the feed's height.
+      if (cardSize <= 0) return
+      const { next } = computeSettled()
+      if (next === null) return
+      const startIndex = Math.min(videos.length - 1, Math.max(0, Math.round(gesture.startOffset / cardSize)))
+      if (next === startIndex) return // Snap-back: the swipe never left the starting card.
+      coordinator.commitSettleTarget(next)
+      // Sync React state with the settled position. The commit above
+      // already authorized playback, so this measure issues no second
+      // request for the same target.
+      measure()
+    }
+    const scheduleStillnessCheck = () => {
+      clearSettleTimers()
+      settleTimer = window.setTimeout(() => {
+        settleTimer = null
+        settleRafFirst = requestAnimationFrame(() => {
+          settleRafFirst = null
+          const first = root.scrollTop
+          settleRafSecond = requestAnimationFrame(() => {
+            settleRafSecond = null
+            if (root.scrollTop !== first) return
+            const cardSize = root.getBoundingClientRect().height
+            if (cardSize <= 0) return
+            const remainder = root.scrollTop % cardSize
+            if (Math.min(remainder, cardSize - remainder) > SETTLE_SNAP_EPSILON_PX) return
+            onSettle()
+          })
+        })
+      }, SETTLE_STILLNESS_MS)
+    }
+    const onScrollEnd = () => onSettle()
     const onFeedScroll = () => {
       const now = performance.now()
       if (!gestureLive(now)) beginGesture(now)
@@ -101,6 +163,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
         if (gesture.samples.length > 8) gesture.samples.shift()
       }
       measure()
+      scheduleStillnessCheck()
     }
     // Round 6: decide the swipe INSIDE the gesture-end handler, while
     // the genuine gesture's transient activation is still alive, instead
@@ -115,6 +178,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // A gesture that does not pass the commit point snaps back with no
     // play request, exactly as before.
     const onGestureEnd = () => {
+      clearSettleTimers()
       if (!gesture || gesture.handled) return
       gesture.handled = true
       const cardSize = root.getBoundingClientRect().height // Cards are exactly the feed's height.
@@ -145,6 +209,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     window.addEventListener('touchend', onGestureEnd, { capture: true })
     window.addEventListener('touchcancel', onGestureEnd, { capture: true })
     root.addEventListener('scroll', onFeedScroll, { passive: true })
+    root.addEventListener('scrollend', onScrollEnd)
     window.addEventListener('scroll', measure, { passive: true })
     window.addEventListener('resize', measure)
     // visualViewport events fire continuously during iOS scrolling and
@@ -173,6 +238,8 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       window.removeEventListener('touchend', onGestureEnd, { capture: true })
       window.removeEventListener('touchcancel', onGestureEnd, { capture: true })
       root.removeEventListener('scroll', onFeedScroll)
+      root.removeEventListener('scrollend', onScrollEnd)
+      clearSettleTimers()
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
       window.visualViewport?.removeEventListener('resize', measureViewport)

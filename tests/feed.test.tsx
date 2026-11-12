@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { VideoFeed } from '../src/VideoFeed'
 import { testVideos } from '../src/videos'
-import type { PlaybackCoordinator, PlayerControl } from '../src/player/PlaybackCoordinator'
+import { PlaybackCoordinator } from '../src/player/PlaybackCoordinator'
+import type { PlayerControl } from '../src/player/PlaybackCoordinator'
 
 const players = vi.hoisted(() => new Map<number, PlayerControl>())
 const created = vi.hoisted(() => [] as PlayerControl[])
@@ -146,6 +147,112 @@ it('does not commit when a short, slow swipe will snap back', () => {
   fireEvent.scroll(feed)
   fireEvent.pointerUp(window)
   expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+})
+
+it('commits the settled target when scrolling stops without a final scroll event', () => {
+  vi.useFakeTimers()
+  const raf = vi.fn((callback: FrameRequestCallback) => { callback(0); return 0 })
+  vi.stubGlobal('requestAnimationFrame', raf)
+  try {
+    render(<VideoFeed videos={testVideos} />)
+    const feed = screen.getByRole('main', { name: '動画フィード' })
+    const next = players.get(1)!
+    position = 0.4; feed.scrollTop = 240
+    fireEvent.scroll(feed)
+    position = 0.55; feed.scrollTop = 330
+    fireEvent.scroll(feed)
+    expect(next.playVideo).not.toHaveBeenCalled()
+    // The snap lands on the next card without a further scroll event
+    // reaching the parent (momentum events coalesced on iOS).
+    position = 1; feed.scrollTop = 600
+    act(() => { vi.advanceTimersByTime(200) })
+    expect(next.unMute).toHaveBeenCalledOnce()
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('commits the settled target on the native scrollend event', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed)
+  position = 0.55; feed.scrollTop = 330
+  fireEvent.scroll(feed)
+  expect(next.playVideo).not.toHaveBeenCalled()
+  position = 1; feed.scrollTop = 600
+  act(() => { feed.dispatchEvent(new Event('scrollend')) })
+  expect(next.unMute).toHaveBeenCalledOnce()
+  expect(next.playVideo).toHaveBeenCalledOnce()
+})
+
+it('commits only once when the gesture end and the settle both fire', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed)
+  position = 0.55; feed.scrollTop = 330
+  fireEvent.scroll(feed)
+  fireEvent.pointerUp(window) // Gesture-end commit.
+  expect(next.playVideo).toHaveBeenCalledOnce()
+  position = 1; feed.scrollTop = 600
+  act(() => { feed.dispatchEvent(new Event('scrollend')) }) // Settle for the same episode: no second request.
+  expect(next.playVideo).toHaveBeenCalledOnce()
+})
+
+it('commits only once when the settle fires before the gesture end', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed)
+  position = 0.55; feed.scrollTop = 330
+  fireEvent.scroll(feed)
+  position = 1; feed.scrollTop = 600
+  act(() => { feed.dispatchEvent(new Event('scrollend')) }) // Settle commit.
+  expect(next.playVideo).toHaveBeenCalledOnce()
+  fireEvent.pointerUp(window) // The same gesture's end event: no second request.
+  expect(next.playVideo).toHaveBeenCalledOnce()
+})
+
+it('promotes an early-started player at settle without a duplicate request', () => {
+  const coordinator = new PlaybackCoordinator()
+  render(<VideoFeed videos={testVideos} coordinator={coordinator} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  position = 1.62 // Card 3 fills 62%: past the 60% early threshold, short of the 65% settle threshold.
+  fireEvent.scroll(feed)
+  fireEvent.scroll(feed)
+  const target = players.get(2)!
+  expect(target.playVideo).toHaveBeenCalledOnce() // The round-4 early attempt.
+  act(() => { coordinator.onStateChange(2, target, 3) }) // Buffering: the early attempt is working.
+  position = 2; feed.scrollTop = 1200
+  act(() => { feed.dispatchEvent(new Event('scrollend')) }) // Settle promotes instead of re-requesting.
+  expect(target.playVideo).toHaveBeenCalledOnce()
+  expect(coordinator.canPlay(2)).toBe(true)
+})
+
+it('does not commit at settle when the swipe snaps back to the starting card', () => {
+  vi.useFakeTimers()
+  const raf = vi.fn((callback: FrameRequestCallback) => { callback(0); return 0 })
+  vi.stubGlobal('requestAnimationFrame', raf)
+  try {
+    render(<VideoFeed videos={testVideos} />)
+    const feed = screen.getByRole('main', { name: '動画フィード' })
+    position = 0.2; feed.scrollTop = 120
+    fireEvent.scroll(feed)
+    // The snap carries the card back without a gesture-end event
+    // reaching the parent (the device case).
+    position = 0; feed.scrollTop = 0
+    act(() => { vi.advanceTimersByTime(200) })
+    expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
 })
 
 it.each([true, false])('bounds mounted players over 100 transitions (preload=%s) and releases them on unmount', preloadAdjacent => {
