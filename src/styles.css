@@ -38,6 +38,16 @@ h2 { font-size: clamp(16px, 2.5vw, 22px); margin: 3px 0 0; }
 .bottom-nav button { border: none; background: transparent; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 4px; font-size: 12px; }
 .bottom-nav button[aria-current] { color: #a8ecd3; background: #233c43; }
 .bottom-nav small { font-size: 9px; }
+/* On-screen diagnostics (?diagnostics=1 only): an in-flow strip between
+   the feed and the bottom navigation. Its own grid row — never an overlay
+   on the player surface — capped so the feed keeps most of the screen. */
+.diagnostics-panel { max-height: 30vh; overflow-y: auto; background: rgba(10, 18, 22, .94); color: #cfe8da; border-top: 1px solid #2d424b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; line-height: 1.55; padding: 4px 8px; }
+.diagnostics-panel__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; position: sticky; top: -4px; background: #0a1216; padding: 2px 0; }
+.diagnostics-panel__actions { display: flex; gap: 6px; }
+.diagnostics-panel__actions button { font: inherit; color: inherit; background: #233c43; border: 1px solid #45616a; border-radius: 4px; padding: 2px 8px; }
+.diagnostics-panel ol { list-style: none; margin: 2px 0 0; padding: 0; }
+.diagnostics-panel li { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diagnostics-panel__empty { margin: 4px 0; color: #9dafb7; }
 .empty-state { padding: 40px 20px; }
 .start-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 24px; min-height: 0; }
 .start-screen p { color: #9dafb7; font-size: 13px; line-height: 1.7; margin: 0; max-width: 420px; }

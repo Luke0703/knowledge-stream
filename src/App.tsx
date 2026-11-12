@@ -3,7 +3,8 @@ import type { HealthResponse } from '../shared/api'
 import { testVideos } from './videos'
 import { VideoFeed } from './VideoFeed'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
-import { startDiagnostics } from './player/diagnostics'
+import { isDiagnosticsEnabled, startDiagnostics } from './player/diagnostics'
+import { DiagnosticsPanel } from './player/DiagnosticsPanel'
 
 export default function App() {
   useEffect(startDiagnostics, [])
@@ -68,6 +69,7 @@ export default function App() {
     <div className={started ? 'feed-host feed-host--started' : 'feed-host feed-host--preparing'}>
       <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} />
     </div>
+    {isDiagnosticsEnabled && <DiagnosticsPanel />}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current="page">▶ <span>動画</span></button>
       <button disabled>⌕ <span>検索</span><small>準備中</small></button>

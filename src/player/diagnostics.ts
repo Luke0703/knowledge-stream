@@ -9,7 +9,67 @@ export function countPlayerWork(name: string) {
 // and an autoplay block on one clock, e.g. how many ms after the start
 // tap the first play request actually left the parent page.
 export function diagnosticEvent(name: string, detail: Record<string, unknown>) {
-  if (enabled) console.info('[player-diagnostics]', name, JSON.stringify(detail))
+  if (!enabled) return
+  const text = JSON.stringify(detail)
+  console.info('[player-diagnostics]', name, text)
+  diagnosticLog.append(name, text)
+}
+
+// One buffered diagnostic event, kept in memory only (never persisted or
+// sent anywhere) so a ?diagnostics=1 session can show recent events on
+// screen — an iPhone without a Mac has no console to read.
+export interface DiagnosticLogEntry {
+  seq: number
+  name: string
+  detail: string
+  elapsedMs: number
+}
+export interface DiagnosticLog {
+  append(name: string, detail: string): void
+  clear(): void
+  getSnapshot(): readonly DiagnosticLogEntry[]
+  subscribe(listener: () => void): () => void
+}
+const DIAGNOSTIC_LOG_CAP = 60
+export function createDiagnosticLog(cap = DIAGNOSTIC_LOG_CAP): DiagnosticLog {
+  const epoch = typeof performance !== 'undefined' ? performance.now() : 0
+  let entries: readonly DiagnosticLogEntry[] = []
+  let seq = 0
+  const listeners = new Set<() => void>()
+  const notify = () => { for (const listener of [...listeners]) listener() }
+  return {
+    append(name, detail) {
+      const now = typeof performance !== 'undefined' ? performance.now() : 0
+      const entry: DiagnosticLogEntry = { seq: ++seq, name, detail, elapsedMs: Math.max(0, Math.round(now - epoch)) }
+      // Replace (never mutate) the array so useSyncExternalStore snapshots
+      // stay referentially stable between changes.
+      entries = [...entries, entry].slice(-cap)
+      notify()
+    },
+    clear() {
+      if (entries.length === 0) return
+      entries = []
+      notify()
+    },
+    getSnapshot: () => entries,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+}
+// Session-wide log fed by diagnosticEvent; inert unless the flag is on,
+// because diagnosticEvent is its only writer.
+export const diagnosticLog = createDiagnosticLog()
+export const isDiagnosticsEnabled = enabled
+export function getDiagnosticLogSnapshot(): readonly DiagnosticLogEntry[] {
+  return diagnosticLog.getSnapshot()
+}
+export function subscribeDiagnosticLog(listener: () => void): () => void {
+  return diagnosticLog.subscribe(listener)
+}
+export function clearDiagnosticLog() {
+  diagnosticLog.clear()
 }
 // Snapshot of the transient-activation state, where the browser exposes
 // it. Round 4's hypothesis is that the YouTube iframe keeps a brief
