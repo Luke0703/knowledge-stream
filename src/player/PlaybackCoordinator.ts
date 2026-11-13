@@ -207,6 +207,23 @@ export class PlaybackCoordinator {
   //   setActive(same index) is a no-op — no duplicate request.
   //   If the snap lands elsewhere after all, that setActive clears the
   //   marker and reconcile pauses the committed player again.
+  //
+  // Round 8 (2026-11-14): the settle commit is authoritative even when
+  // the target is ALREADY the active item. The round-7 device session
+  // showed settleCommit firing 0 times: the feed's measure activates
+  // the entering card mid-scroll (its reconcile start is the attempt
+  // the panel recorded), setActive clears the early marker, and when
+  // that start is blocked the card sits active in blockedByAutoplay —
+  // so the "already the settled item" early return below swallowed
+  // every settle commit and the settle moment never got an attempt of
+  // its own. A settle commit for an active-but-blocked target now
+  // falls through to the shared body: it stamps the episode's one
+  // commit, emits settleCommit, clears the blocked mark and issues a
+  // fresh start with reason 'settle-commit'. An active target that is
+  // NOT blocked (its start went through) still returns early — there
+  // is nothing to commit — and the gesture-end path keeps the old
+  // return unconditionally: its moment is inside the gesture, where
+  // the reconcile attempt has not necessarily resolved yet.
   commitSwipeTarget(index: number) {
     this.commitTarget(index, 'touchend-commit')
   }
@@ -218,7 +235,12 @@ export class PlaybackCoordinator {
   private commitTarget(index: number, kind: 'touchend-commit' | 'settle-commit') {
     if (this.lastCommit?.index === index && this.lastCommit.episodeAt === this.scrollStartedAt) return
     if (this.held || !this.visible) return
-    if (index === this.active && this.earlyIndex !== index) return // Already the settled item: nothing to commit.
+    if (index === this.active && this.earlyIndex !== index) {
+      // Already the settled item: nothing to commit — UNLESS this is a
+      // settle commit and the item's start was blocked (round 8: the
+      // settle moment is then the authoritative retry, see above).
+      if (kind !== 'settle-commit' || !this.blockedByAutoplay.has(index)) return
+    }
     this.noteUserGesture()
     this.lastCommit = { index, episodeAt: this.scrollStartedAt }
     diagnosticEvent(kind === 'touchend-commit' ? 'swipeCommit' : 'settleCommit', { index, msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })

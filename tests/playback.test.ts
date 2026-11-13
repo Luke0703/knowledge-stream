@@ -531,6 +531,61 @@ describe('settle commit (round 7)', () => {
   })
 })
 
+describe('settle commit authority over a blocked active target (round 8)', () => {
+  // Reproduces the 2026-11-14 device session step by step: the round-4
+  // early attempt fires mid-scroll and is blocked; the feed's measure
+  // then activates the entering card (clearing the early marker) and
+  // its reconcile start is blocked too, so the card sits ACTIVE in
+  // blockedByAutoplay when the settle handler calls commitSettleTarget.
+  // Round 7's "already the settled item" return swallowed that call —
+  // settleCommit fired 0 times on device.
+  const blockedActiveSetup = () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.noteScrollStarted()
+    coordinator.attemptEarlyStart(1) // Mid-scroll early attempt.
+    coordinator.onAutoplayBlocked(1) // Blocked; not active yet, so the mark simply stays.
+    coordinator.setActive(1) // The measure activates the card mid-scroll: reconcile issues its start.
+    coordinator.onAutoplayBlocked(1) // Blocked again; no fresh parent gesture, so no window retry.
+    next.unMute.mockClear(); next.playVideo.mockClear()
+    return { coordinator, first, next }
+  }
+
+  it('issues a fresh settle-commit start when the settled target is already active but blocked', () => {
+    const { coordinator, next } = blockedActiveSetup()
+    coordinator.commitSettleTarget(1) // The settle moment gets its own attempt at last.
+    expect(next.unMute).toHaveBeenCalledOnce()
+    expect(next.playVideo).toHaveBeenCalledOnce()
+    expect(next.unMute.mock.invocationCallOrder[0]).toBeLessThan(next.playVideo.mock.invocationCallOrder[0])
+    expect(coordinator.canPlay(1)).toBe(true)
+  })
+  it('commits only once per episode on the authoritative path too', () => {
+    const { coordinator, next } = blockedActiveSetup()
+    coordinator.commitSettleTarget(1)
+    coordinator.onAutoplayBlocked(1) // The settle start was blocked as well; the mark is back…
+    coordinator.commitSettleTarget(1) // …but the same scroll episode gets no second commit.
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
+  it('keeps the gesture-end path unchanged for an already-active blocked target', () => {
+    const { coordinator, next } = blockedActiveSetup()
+    coordinator.commitSwipeTarget(1) // Desktop path: the old early return stands, no stamp spent.
+    expect(next.playVideo).not.toHaveBeenCalled()
+    coordinator.commitSettleTarget(1) // The settle path still owns this episode's commit.
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
+  it('stays a no-op at settle when the active target is not blocked', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.noteScrollStarted()
+    coordinator.setActive(1) // Reconcile start issued and not blocked: nothing to commit.
+    next.playVideo.mockClear()
+    coordinator.commitSettleTarget(1)
+    expect(next.playVideo).not.toHaveBeenCalled()
+  })
+})
+
 describe('loop playback (round 5)', () => {
   it('restarts the settled active video from the beginning when it ends', () => {
     const coordinator = new PlaybackCoordinator(), current = player()

@@ -235,6 +235,30 @@ it('promotes an early-started player at settle without a duplicate request', () 
   expect(coordinator.canPlay(2)).toBe(true)
 })
 
+it('re-issues the start at settle when the landing card was already activated and blocked mid-scroll (round 8)', () => {
+  const coordinator = new PlaybackCoordinator()
+  render(<VideoFeed videos={testVideos} coordinator={coordinator} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed) // The scroll episode begins on card 1.
+  // The snap lands: this measure activates card 2 mid-scroll and its
+  // reconcile start is issued…
+  position = 1; feed.scrollTop = 600
+  fireEvent.scroll(feed)
+  expect(next.playVideo).toHaveBeenCalledOnce()
+  // …and YouTube blocks it. No parent-side gesture stamp is fresh, so
+  // no gesture-window retry fires: the card sits active and blocked —
+  // the 2026-11-14 device state in which round 7's settle commit
+  // silently returned without emitting settleCommit.
+  act(() => { coordinator.onAutoplayBlocked(1) })
+  vi.mocked(next.playVideo).mockClear(); vi.mocked(next.unMute).mockClear()
+  act(() => { feed.dispatchEvent(new Event('scrollend')) }) // Settle: the authoritative commit retries.
+  expect(next.unMute).toHaveBeenCalledOnce()
+  expect(next.playVideo).toHaveBeenCalledOnce()
+  expect(coordinator.canPlay(1)).toBe(true)
+})
+
 it('does not commit at settle when the swipe snaps back to the starting card', () => {
   vi.useFakeTimers()
   const raf = vi.fn((callback: FrameRequestCallback) => { callback(0); return 0 })
