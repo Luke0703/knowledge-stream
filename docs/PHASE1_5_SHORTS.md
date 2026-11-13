@@ -444,3 +444,30 @@ iframe再生成の削減は確認できましたが、**利用者が報告した
 2. 開始タップで1本目が音声つきで始まること、前へ／次へボタンで音声つきで移動できること（第3ラウンド到達点の回帰確認。ループは既に実機確認済みのため再確認不要）。
 3. **本題**：1本目から2本目へ通常の速さでスワイプし、着地後に音声つきで再生が始まるかを見る。速いスワイプ／遅いスワイプ、2→3、3→2（逆方向）も試す。Brave と Safari の両方で確認する。
 4. パネルで数えるもの：`settleCommit` がスワイプごとに1件出るか、`playRequest (reason=settle-commit)` の後に音声つき再生が始まるか、`autoplayBlocked` が続くか。`settleCommit` が出ない場合は静定検出自体が届いていない（scrollend／静止フォールバックのどちらが動いたかも含め記録する）。
+
+## 2026-11-14：第7ラウンド実機結果と、第8ラウンド — 静定コミットを「既に active でブロック済み」の目標にも効かせる
+
+### 実機結果（第7ラウンド、2026-11-14 01:51〜、iPhone Brave / Safari、PR #7 コメント 6859369762）
+
+- **`settleCommit` は両ブラウザの全セッションで0件**。着地時の再生試行は `reconcile` と `blocked-retry` 経由のみで、`settle-commit` 理由の playRequest も無い。
+- Brave は時々通る時々止まる（3本目が gesture から約5.9秒後の `reconcile` で音声つき再生に成功、他は blocked）。Safari は着地すべて blocked。
+- つまり第7ラウンドは「静定要求がブロックされた」のではなく「**静定コミット自体が一度も発行されていない**」が正しい読みである。
+
+### 原因（コード確認で確定）
+
+`VideoFeed` の `measure()` はスクロールイベントごとに走り、進入カードが active 条件（カード65%・プレーヤー50%）を満たした時点で、**スクロール途中でも `setActive(next)` を呼ぶ**。その際 `reconcile` が再生要求を出し（実機ログの着地試行の正体はこれ）、併せて `clearEarly()` で早期試行マーカーが消える。要求がブロックされると目標は `blockedByAutoplay` に残ったまま active になる。静定検出が `commitSettleTarget(next)` を呼んでも、`PlaybackCoordinator.commitTarget()` の「既に確定済みの項目：何もしない」早期 return（`index === this.active && this.earlyIndex !== index`）に吸収され、診断イベントも再試行も出ない。これが `settleCommit` 0件の機構である。
+
+### 今回の変更（第8ラウンド）
+
+| ファイル | 変更と理由 |
+| --- | --- |
+| `src/player/PlaybackCoordinator.ts` | `commitTarget()` の早期 return に例外を追加：**kind が `settle-commit` かつ目標が `blockedByAutoplay` に居る場合のみ**、return せず共通本体へ落とす。本体は従来どおり 1エピソード1コミットの stamp、`settleCommit` 診断の発行、blocked マークの解除、理由 `settle-commit` での新規 start を行う。active だがブロックされていない目標（再生が通っている）は従来どおり no-op。デスクトップの gesture-end 経路（`touchend-commit`）は早期 return を無条件に維持し、無変更 |
+| `tests/playback.test.ts` | 第8ラウンドの coordinator テスト4件（active-but-blocked での発行、同エピソード内の1回性、gesture-end 経路の不変、非ブロック時の no-op）。実機シーケンス（早期試行 blocked → measure が active 化 → reconcile blocked → 静定コミット）を再現 |
+| `tests/playback-settle-diagnostics.test.ts`（新規） | `?diagnostics=1` を有効化してからモジュールを読み直し、実物の診断リングバッファ（画面内パネルが読むもの）で `settleCommit` と理由 `settle-commit` の playRequest が記録されること、非ブロック時に出ないことを検証する2件 |
+| `tests/feed.test.tsx` | フィード実経路の再現1件（スクロールで着地カードが active 化＋blocked → scrollend で静定コミットが再発行）。スナップバックで無発行の既存テストは継続して合格 |
+
+### 検証と限界（実機未確認の明記）
+
+- 型チェック・build 成功（新アセット `index-CeA2FHos.js`）。自動テストは **8ファイル114件成功**（従来107件＋新規7件）。新テストのうち再現系5件は修正前のコードでは失敗することを差し戻して確認済み（ガード維持系2件は前後とも合格）。
+- **この第8ラウンドも iPhone 実機では未確認**である。直ったと主張しない。
+- 残る不確実性は第7ラウンドと同じ構造：静定時点の要求はジェスチャーの後であり、親側 activation は iframe に届かない（第6ラウンドで判明）。今回は「静定コミットが発行される」状態までを初めて作った段階で、その要求自体が WebKit に塞がれる可能性は残る。実機で `settleCommit` が出た上でなお blocked なら、スワイプ＋音声は最後の未検証経路まで塞がれたと確定し、「再生する」タップ経路を正規ルートとして設計を寄せる。
