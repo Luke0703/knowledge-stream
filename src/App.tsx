@@ -3,15 +3,22 @@ import type { HealthResponse } from '../shared/api'
 import { testVideos } from './videos'
 import { VideoFeed } from './VideoFeed'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
+import { SinglePlaybackCoordinator } from './player/SinglePlaybackCoordinator'
+import type { FeedCoordinator } from './player/FeedCoordinator'
 import { isDiagnosticsEnabled, startDiagnostics } from './player/diagnostics'
 import { DiagnosticsPanel } from './player/DiagnosticsPanel'
 
 export default function App() {
   useEffect(startDiagnostics, [])
+  // Round 10 A/B flag: ?player=single selects the single-persistent-
+  // player core; anything else keeps the per-card core as the default,
+  // so one preview deploy serves both modes for device comparison.
+  const [playerMode] = useState<'multi' | 'single'>(() =>
+    new URLSearchParams(window.location.search).get('player') === 'single' ? 'single' : 'multi')
   // The coordinator lives here, not in the feed, so App can hold playback
   // during preparation and release it from the decisive start tap.
-  const [coordinator] = useState(() => {
-    const created = new PlaybackCoordinator()
+  const [coordinator] = useState<FeedCoordinator>(() => {
+    const created = playerMode === 'single' ? new SinglePlaybackCoordinator() : new PlaybackCoordinator()
     created.setHeld(true)
     return created
   })
@@ -59,7 +66,7 @@ export default function App() {
   }, [])
 
   return <div className="app-shell">
-    <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
+    <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{playerMode === 'single' && '単一プレーヤー · '}{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
     {!started && <main className="start-screen">
       <p className="start-title">タップして動画をはじめる</p>
       <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。まず裏でプレーヤーを準備し、準備ができた瞬間のタップから直接再生を始めます。</p>
@@ -67,7 +74,7 @@ export default function App() {
       {!firstReady && <button className="start-skip" onClick={begin}>準備を待たずに表示する</button>}
     </main>}
     <div className={started ? 'feed-host feed-host--started' : 'feed-host feed-host--preparing'}>
-      <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} />
+      <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} playerMode={playerMode} />
     </div>
     {isDiagnosticsEnabled && <DiagnosticsPanel />}
     <nav className="bottom-nav" aria-label="メインナビゲーション">

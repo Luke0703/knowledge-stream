@@ -12,7 +12,16 @@ a { color: #a8ecd3; }
 h1 { font-size: 19px; letter-spacing: -.03em; margin: 5px 0 0; }
 h1 span { color: #9dafb7; font-size: 12px; font-weight: 400; letter-spacing: 0; }
 .api-status { font-size: 10px; color: #9dafb7; }
-.feed { overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior-y: contain; min-height: 0; scrollbar-width: thin; }
+.feed { position: relative; overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior-y: contain; min-height: 0; scrollbar-width: thin; }
+/* Round 10 (?player=single): the one persistent player's layer. A child
+   of the scroll container, so it rides with the content while scrolling;
+   positioned over the active card by transform only — the iframe inside
+   is never reparented (WebKit reloads moved iframes). The layer itself
+   takes no touches: the status row re-enables them for its button, and
+   the iframe's own pointer-events are gate-controlled inline. */
+.single-player-layer { position: absolute; top: 0; left: 0; right: 0; height: 100%; display: flex; justify-content: center; pointer-events: none; }
+.single-player-slot { height: 100%; min-height: 0; flex: none; }
+.single-player-slot .player-status { pointer-events: auto; }
 .video-card { position: relative; min-height: 100%; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0; gap: 0; }
 .video-meta { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .player-slot { width: min(100%, 540px); }

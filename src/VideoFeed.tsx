@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
+import { SinglePlaybackCoordinator } from './player/SinglePlaybackCoordinator'
+import type { FeedCoordinator } from './player/FeedCoordinator'
 import { decideSwipeTarget, EARLY_PLAY_THRESHOLD, inMountWindow, retainedPlayers, selectActive, SWIPE_PROJECTION_MS, visibleRatio } from './player/visibility'
 import { YouTubePlayer } from './player/YouTubePlayer'
+import { SingleYouTubePlayer } from './player/SingleYouTubePlayer'
 import type { TestVideo } from './videos'
-import { countPlayerWork } from './player/diagnostics'
+import { countPlayerWork, diagnosticEvent } from './player/diagnostics'
 
-export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp }: { videos: TestVideo[]; preloadAdjacent?: boolean; coordinator?: PlaybackCoordinator }) {
+export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp, playerMode = 'multi' }: { videos: TestVideo[]; preloadAdjacent?: boolean; coordinator?: FeedCoordinator; playerMode?: 'multi' | 'single' }) {
   const viewport = useRef<HTMLDivElement>(null)
   const measureNow = useRef<(() => void) | null>(null)
   // App passes its coordinator so the start tap (stamped before the feed
@@ -13,6 +16,13 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
   // use (tests) falls back to an internal one.
   const [ownCoordinator] = useState(() => new PlaybackCoordinator())
   const coordinator = coordinatorProp ?? ownCoordinator
+  // Round 10 (?player=single): one persistent player for the whole
+  // feed. Single mode is only real when the matching coordinator core
+  // was passed; the scroll/gesture/settle machinery below is shared
+  // unchanged, and the commits land on the single-player core, whose
+  // switch is issued synchronously inside the same handlers.
+  const singleCoordinator = coordinator instanceof SinglePlaybackCoordinator ? coordinator : null
+  const single = playerMode === 'single' && singleCoordinator !== null
   const [active, setActive] = useState<number | null>(null)
   const [center, setCenter] = useState(0)
   const [previousPlayers, setPreviousPlayers] = useState<number[]>([])
@@ -24,6 +34,10 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
   useEffect(() => {
     const root = viewport.current
     if (!root) return
+    if (singleCoordinator) {
+      singleCoordinator.setVideos(videos)
+      diagnosticEvent('singlePlayer', { action: 'enabled' })
+    }
     const computeSettled = () => {
       const bounds = root.getBoundingClientRect()
       // Intersection includes viewport clipping (small screens/zoom/URL bar changes).
@@ -63,7 +77,9 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       const entering = samples
         .filter(sample => sample.index !== next && sample.cardRatio >= EARLY_PLAY_THRESHOLD)
         .sort((a, b) => b.cardRatio - a.cardRatio)[0]
-      if (entering) coordinator.attemptEarlyStart(entering.index)
+      // Single-player mode has no per-card player to attempt early:
+      // its one player switches at gesture end by design (round 10).
+      if (entering && !single) coordinator.attemptEarlyStart(entering.index)
     }
     // Synchronous scroll measurement stops the old video before the next React render.
     measureNow.current = measure
@@ -128,12 +144,13 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       const { next } = computeSettled()
       if (next === null) return
       const startIndex = Math.min(videos.length - 1, Math.max(0, Math.round(gesture.startOffset / cardSize)))
-      if (next === startIndex) return // Snap-back: the swipe never left the starting card.
+      if (next === startIndex) { coordinator.noteScrollEpisodeEnd(); return } // Snap-back: the swipe never left the starting card.
       coordinator.commitSettleTarget(next)
       // Sync React state with the settled position. The commit above
       // already authorized playback, so this measure issues no second
       // request for the same target.
       measure()
+      coordinator.noteScrollEpisodeEnd()
     }
     const scheduleStillnessCheck = () => {
       clearSettleTimers()
@@ -217,6 +234,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       const projected = root.scrollTop + velocity * SWIPE_PROJECTION_MS
       const target = decideSwipeTarget(startIndex, projected / cardSize, videos.length)
       if (target !== startIndex) coordinator.commitSwipeTarget(target)
+      coordinator.noteScrollEpisodeEnd()
     }
     // Pointer events cover touch and mouse uniformly; the touchend /
     // touchcancel listeners are the fallback for browsers that route a
@@ -275,7 +293,7 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       observer.disconnect()
       coordinator.setActive(null)
     }
-  }, [coordinator, videos])
+  }, [coordinator, videos, single, singleCoordinator])
 
   const navigate = (index: number) => {
     const root = viewport.current
@@ -288,6 +306,10 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // Keep the request inside the click gesture for a ready adjacent player.
     // Visibility still gates playback; Safari/YouTube may still reject sound-on autoplay.
     measureNow.current?.()
+    // Single-player mode: the measure above only records the landing
+    // (a scroll episode may be open from the button's pointerdown), so
+    // issue the switch explicitly — still inside this click handler.
+    if (single) coordinator.commitSettleTarget(index)
   }
 
   if (!videos.length) return <main className="empty-state">テスト動画がありません。動画データを確認してください。</main>
@@ -300,11 +322,14 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
           <h2>{video.label}</h2>
         </div>
         <div className="player-slot">
-          {mounted.includes(index)
-            ? <YouTubePlayer video={video} index={index} coordinator={coordinator} load={preloadAdjacent ? inMountWindow(index, center) : index === center} />
-            : <><div className="player-surface placeholder">近づくとプレーヤーを読み込みます</div><div className="player-status" /></>}
+          {single
+            ? <><div className="player-surface placeholder">{video.label}</div><div className="player-status" /></>
+            : mounted.includes(index)
+              ? <YouTubePlayer video={video} index={index} coordinator={coordinator as PlaybackCoordinator} load={preloadAdjacent ? inMountWindow(index, center) : index === center} />
+              : <><div className="player-surface placeholder">近づくとプレーヤーを読み込みます</div><div className="player-status" /></>}
         </div>
       </article>)}
+      {single && singleCoordinator && <SingleYouTubePlayer videos={videos} coordinator={singleCoordinator} />}
     </main>
     <section className="feed-controls" aria-label="動画の切り替え">
       <div><button onClick={() => navigate(center - 1)} disabled={center === 0}>↑ 前へ</button>

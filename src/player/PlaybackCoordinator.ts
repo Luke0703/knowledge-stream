@@ -1,4 +1,5 @@
 import { countPlayerWork, diagnosticEvent, userActivationSnapshot } from './diagnostics'
+import type { FeedCoordinator } from './FeedCoordinator'
 export type PlayerControl = Pick<YT.Player, 'pauseVideo' | 'playVideo' | 'mute' | 'unMute' | 'seekTo'>
 // Why a play request was issued, recorded in diagnostics so a device
 // session can tell the round-4 early (mid-scroll) attempt apart from the
@@ -7,7 +8,7 @@ type PlayRequestReason = 'reconcile' | 'register' | 'start-gesture' | 'blocked-r
 
 // One synchronous authority: pause old players before starting a new one.
 // React state/async onReady callbacks are not trusted as playback eligibility.
-export class PlaybackCoordinator {
+export class PlaybackCoordinator implements FeedCoordinator {
   private players = new Map<number, PlayerControl>()
   private active: number | null = null
   private visible = true
@@ -185,6 +186,12 @@ export class PlaybackCoordinator {
     // parent document instead of the iframe under the finger.
     this.setGate(null, 'scroll-start')
   }
+
+  // FeedCoordinator parity (round 10): this core keys its commits off
+  // the episode stamp (scrollStartedAt) and needs no explicit episode
+  // close; SinglePlaybackCoordinator uses the call to release a
+  // landing no commit claimed. No-op here by design.
+  noteScrollEpisodeEnd() {}
 
   // Round 9 diagnostics: the feed reports EVERY gesture-end event it
   // receives (pointerup / pointercancel / touchend / touchcancel)
