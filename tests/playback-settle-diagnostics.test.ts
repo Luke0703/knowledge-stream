@@ -42,6 +42,36 @@ describe('settle commit diagnostics (round 8)', () => {
     expect(diagnostics.getDiagnosticLogSnapshot().filter(entry => entry.name === 'settleCommit')).toHaveLength(1)
   })
 
+  it('records pointerGate switches and gestureEnd arrivals in the ring buffer (round 9)', async () => {
+    const { PlaybackCoordinator, diagnostics } = await loadModules()
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    diagnostics.clearDiagnosticLog()
+    coordinator.onStateChange(0, first, 1) // Settled + playing: the gate opens for card 1 only.
+    coordinator.noteScrollStarted() // The next scroll closes it again.
+    let snapshot = diagnostics.getDiagnosticLogSnapshot()
+    const gateEvents = snapshot.filter(entry => entry.name === 'pointerGate')
+    expect(gateEvents).toHaveLength(2)
+    expect(gateEvents[0].detail).toContain('"index":0')
+    expect(gateEvents[0].detail).toContain('"interactive":true')
+    expect(gateEvents[1].detail).toContain('"interactive":false')
+    expect(gateEvents[1].detail).toContain('"reason":"scroll-start"')
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    // Every gesture-end event the parent receives is logged before
+    // dedupe, with the activation the parent held at that moment — the
+    // evidence rounds 6–8 could not produce on device.
+    diagnostics.clearDiagnosticLog()
+    coordinator.noteGestureEnd('touchend', { episodeActive: true, alreadyHandled: false })
+    coordinator.noteGestureEnd('pointercancel', { episodeActive: false, alreadyHandled: false })
+    snapshot = diagnostics.getDiagnosticLogSnapshot()
+    const endEvents = snapshot.filter(entry => entry.name === 'gestureEnd')
+    expect(endEvents).toHaveLength(2)
+    expect(endEvents[0].detail).toContain('"type":"touchend"')
+    expect(endEvents[0].detail).toContain('"userActivation"')
+    expect(endEvents[1].detail).toContain('"type":"pointercancel"')
+  })
+
   it('emits no settleCommit when the active target is not blocked', async () => {
     const { PlaybackCoordinator, diagnostics } = await loadModules()
     const coordinator = new PlaybackCoordinator(), first = player(), next = player()

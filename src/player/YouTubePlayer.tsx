@@ -59,6 +59,23 @@ export function YouTubePlayer({ video, index, coordinator, load = true }: {
         } else player!.playVideo()
       },
     }
+    // Round 9 (2026-11-14): apply the coordinator's pointer-events
+    // gate to THIS player's iframe element. This switches the iframe's
+    // OWN CSS property — it is not an overlay: no element is layered
+    // above the player, nothing covers YouTube's UI, logos or links,
+    // and while the gate is open ('auto', the settled playing video)
+    // the official UI receives touches exactly as before. While it is
+    // closed ('none'), touches pass through the iframe to the parent
+    // document, which is what lets the parent observe the swipe's
+    // gesture end (see PlaybackCoordinator's gate comment).
+    const applyGate = () => {
+      if (!player) return
+      try {
+        const iframe = player.getIframe() as unknown as HTMLIFrameElement | undefined
+        if (iframe?.style) iframe.style.pointerEvents = coordinator.isIframeInteractive(index) ? 'auto' : 'none'
+      } catch { /* Iframe not constructed yet; onReady reapplies the gate. */ }
+    }
+    const unsubscribeGate = coordinator.subscribeGate(applyGate)
     const syncLoading = () => {
       if (!ready || !player) return
       if (loadRef.current) {
@@ -104,6 +121,7 @@ export function YouTubePlayer({ video, index, coordinator, load = true }: {
               setStatus('準備完了。再生されない場合はYouTubeの再生ボタンを押してください。')
               player = event.target
               ready = true
+              applyGate()
               syncLoading()
             },
             onStateChange: event => {
@@ -141,12 +159,14 @@ export function YouTubePlayer({ video, index, coordinator, load = true }: {
         })
         player.getIframe().title = `${video.label} — YouTubeプレーヤー`
         player.getIframe().setAttribute('referrerpolicy', 'strict-origin-when-cross-origin')
+        applyGate() // The gate starts closed: a fresh iframe takes no touches until its card is settled and playing.
       }).catch(() => {
         if (!cancelled) setError('YouTubeを読み込めません。通信やコンテンツブロッカーを確認してください。')
       })
     }, 150)
     return () => {
       cancelled = true
+      unsubscribeGate()
       synchronize.current = null
       clearTimeout(startTimeout)
       clearTimeout(readyTimeout)

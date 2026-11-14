@@ -177,7 +177,29 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // the ordinary settle path (setActive in measure) still corrects.
     // A gesture that does not pass the commit point snaps back with no
     // play request, exactly as before.
-    const onGestureEnd = () => {
+    //
+    // Round 9 (2026-11-14): this handler is revived as the primary
+    // path, with its round-6 failure — the end events never reaching
+    // the parent at all, because the swipe's touch is captured inside
+    // the YouTube iframe — addressed by the coordinator's
+    // pointer-events gate: every not-yet-playing card's iframe has
+    // pointer-events: none (the iframe element's own property, NOT an
+    // overlay above the player), so a swipe starting on such a card
+    // delivers its full touch stream, gesture end included, to this
+    // document. A swipe that starts on the one settled playing card
+    // may still lose its end event to that card's iframe; the round-8
+    // settle commit remains its second chance. Every end event that
+    // DOES arrive is logged before dedupe (noteGestureEnd), so a
+    // device session can finally distinguish "the event never
+    // arrived" from "it arrived and the request was blocked".
+    // pointercancel is treated as a gesture end like the others: a
+    // browser that takes the gesture over (scroll takeover, system
+    // gesture) may end the stream with a cancel instead of an up/end,
+    // and the samples-plus-projection decision below is the guard —
+    // a cancel with no recorded travel projects onto the starting
+    // card and commits nothing.
+    const onGestureEnd = (type: string) => {
+      coordinator.noteGestureEnd(type, { episodeActive: gesture !== null, alreadyHandled: gesture?.handled ?? false })
       clearSettleTimers()
       if (!gesture || gesture.handled) return
       gesture.handled = true
@@ -203,11 +225,15 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // dedupes here, so several end events for one gesture are safe.
     // A mouse drag does not scroll the feed natively, so its travel is
     // zero and it simply never commits — desktop behaviour is unchanged.
+    const onPointerUp = () => onGestureEnd('pointerup')
+    const onPointerCancel = () => onGestureEnd('pointercancel')
+    const onTouchEnd = () => onGestureEnd('touchend')
+    const onTouchCancel = () => onGestureEnd('touchcancel')
     window.addEventListener('pointerdown', beginGestureFromPointer, { capture: true })
-    window.addEventListener('pointerup', onGestureEnd, { capture: true })
-    window.addEventListener('pointercancel', onGestureEnd, { capture: true })
-    window.addEventListener('touchend', onGestureEnd, { capture: true })
-    window.addEventListener('touchcancel', onGestureEnd, { capture: true })
+    window.addEventListener('pointerup', onPointerUp, { capture: true })
+    window.addEventListener('pointercancel', onPointerCancel, { capture: true })
+    window.addEventListener('touchend', onTouchEnd, { capture: true })
+    window.addEventListener('touchcancel', onTouchCancel, { capture: true })
     root.addEventListener('scroll', onFeedScroll, { passive: true })
     root.addEventListener('scrollend', onScrollEnd)
     window.addEventListener('scroll', measure, { passive: true })
@@ -233,10 +259,10 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
       window.removeEventListener('pointerdown', unlock, { capture: true })
       window.removeEventListener('pointerup', stampGestureEnd, { capture: true })
       window.removeEventListener('pointerdown', beginGestureFromPointer, { capture: true })
-      window.removeEventListener('pointerup', onGestureEnd, { capture: true })
-      window.removeEventListener('pointercancel', onGestureEnd, { capture: true })
-      window.removeEventListener('touchend', onGestureEnd, { capture: true })
-      window.removeEventListener('touchcancel', onGestureEnd, { capture: true })
+      window.removeEventListener('pointerup', onPointerUp, { capture: true })
+      window.removeEventListener('pointercancel', onPointerCancel, { capture: true })
+      window.removeEventListener('touchend', onTouchEnd, { capture: true })
+      window.removeEventListener('touchcancel', onTouchCancel, { capture: true })
       root.removeEventListener('scroll', onFeedScroll)
       root.removeEventListener('scrollend', onScrollEnd)
       clearSettleTimers()

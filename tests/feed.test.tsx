@@ -140,6 +140,36 @@ it('commits only once when one gesture ends through several event types', () => 
   expect(next.playVideo).toHaveBeenCalledOnce()
 })
 
+it('commits the swipe target when the gesture ends in pointercancel, and only once (round 9)', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  const next = players.get(1)!
+  position = 0.4; feed.scrollTop = 240
+  fireEvent.scroll(feed)
+  position = 0.55; feed.scrollTop = 330
+  fireEvent.scroll(feed)
+  expect(next.playVideo).not.toHaveBeenCalled()
+  // A browser that takes the gesture over may end the stream with a
+  // cancel instead of an up/end; the recorded travel still decides.
+  act(() => {
+    fireEvent.pointerCancel(window)
+    expect(next.playVideo).toHaveBeenCalledOnce()
+  })
+  fireEvent.touchEnd(window) // A trailing end event for the same gesture: no second commit.
+  expect(next.playVideo).toHaveBeenCalledOnce()
+})
+
+it('does not commit when a pointercancel arrives without swipe travel (round 9)', () => {
+  render(<VideoFeed videos={testVideos} />)
+  const feed = screen.getByRole('main', { name: '動画フィード' })
+  fireEvent.pointerCancel(window) // No scroll episode at all.
+  expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+  position = 0.2; feed.scrollTop = 120 // A short, slow drag that will snap back.
+  fireEvent.scroll(feed)
+  fireEvent.pointerCancel(window)
+  expect(players.get(1)!.playVideo).not.toHaveBeenCalled()
+})
+
 it('does not commit when a short, slow swipe will snap back', () => {
   render(<VideoFeed videos={testVideos} />)
   const feed = screen.getByRole('main', { name: '動画フィード' })

@@ -179,6 +179,24 @@ it('offers manual play after ready even when no autoplay-blocked event arrives',
   expect(instances[0].playVideo).toHaveBeenCalledOnce()
 })
 
+it('applies the round-9 pointer-events gate to the iframe element itself', async () => {
+  const coordinator = new PlaybackCoordinator()
+  coordinator.setActive(0)
+  render(<YouTubePlayer video={testVideos[0]} index={0} coordinator={coordinator} />)
+  await flush()
+  const instance = instances[0]
+  // From construction the gate is closed: the iframe takes no touches,
+  // so a swipe starting on this not-yet-playing card reaches the parent.
+  expect(instance.iframe.style.pointerEvents).toBe('none')
+  act(() => instance.ready())
+  expect(instance.iframe.style.pointerEvents).toBe('none') // Ready is not playing yet.
+  const state = (data: number) => instance.options.events?.onStateChange?.({ target: instance as unknown as YT.Player, data })
+  act(() => state(1)) // Settled + playing: YouTube's official UI gets its touches back.
+  expect(instance.iframe.style.pointerEvents).toBe('auto')
+  act(() => coordinator.noteScrollStarted()) // The next swipe closes every gate again.
+  expect(instance.iframe.style.pointerEvents).toBe('none')
+})
+
 it('reuses the iframe while stopping media outside the load window, including late ready', async () => {
   const coordinator = new PlaybackCoordinator()
   const view = render(<YouTubePlayer video={testVideos[0]} index={0} coordinator={coordinator} load={false} />)

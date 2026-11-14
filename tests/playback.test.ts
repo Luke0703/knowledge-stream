@@ -615,3 +615,92 @@ describe('loop playback (round 5)', () => {
     expect(current.playVideo).not.toHaveBeenCalled()
   })
 })
+
+describe('pointer-events gate (round 9)', () => {
+  it('keeps every iframe gated off until the settled active player is actually playing', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    // Ready and even start-requested is not enough: no playing state yet.
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    expect(coordinator.isIframeInteractive(1)).toBe(false)
+    coordinator.onStateChange(1, next, 1) // A non-active player reporting playback opens nothing.
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    expect(coordinator.isIframeInteractive(1)).toBe(false)
+    coordinator.onStateChange(0, first, 3) // Buffering counts as heading to playing.
+    expect(coordinator.isIframeInteractive(0)).toBe(true)
+    expect(coordinator.isIframeInteractive(1)).toBe(false)
+  })
+  it('does not open for an early (unsettled) player that starts mid-scroll', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.attemptEarlyStart(1)
+    coordinator.onStateChange(1, next, 3) // The early attempt is working, but card 2 has not settled.
+    expect(coordinator.isIframeInteractive(1)).toBe(false)
+    coordinator.setActive(1) // Settling promotes it; the gate follows the settled playing card.
+    coordinator.onStateChange(1, next, 1)
+    expect(coordinator.isIframeInteractive(1)).toBe(true)
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+  })
+  it('closes at the next scroll start and reopens when the settled player reports playing again', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    coordinator.onStateChange(0, first, 1)
+    expect(coordinator.isIframeInteractive(0)).toBe(true)
+    coordinator.noteScrollStarted() // A new swipe: every gate closes, the playing card's included.
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    coordinator.commitSwipeTarget(1) // The revived gesture-end commit lands on card 2…
+    coordinator.onStateChange(1, next, 1) // …which reports playing: its gate opens.
+    expect(coordinator.isIframeInteractive(1)).toBe(true)
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+  })
+  it('closes on pause, autoplay block, active change, hide and unregister', () => {
+    const coordinator = new PlaybackCoordinator(), first = player(), next = player()
+    coordinator.register(0, first); coordinator.register(1, next)
+    coordinator.setActive(0)
+    const openFirst = () => { coordinator.onStateChange(0, first, 1); expect(coordinator.isIframeInteractive(0)).toBe(true) }
+    openFirst()
+    coordinator.onStateChange(0, first, 2) // Paused via YouTube's own UI.
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    openFirst()
+    coordinator.onAutoplayBlocked(0)
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    openFirst()
+    coordinator.setActive(1)
+    expect(coordinator.isIframeInteractive(0)).toBe(false)
+    coordinator.onStateChange(1, next, 1)
+    expect(coordinator.isIframeInteractive(1)).toBe(true)
+    coordinator.setVisible(false)
+    expect(coordinator.isIframeInteractive(1)).toBe(false)
+    coordinator.setVisible(true)
+    coordinator.onStateChange(1, next, 1)
+    expect(coordinator.isIframeInteractive(1)).toBe(true)
+    coordinator.unregister(1, next)
+    expect(coordinator.isIframeInteractive(1)).toBe(false)
+  })
+  it('does not open while held, and notifies subscribers only on actual switches', () => {
+    const coordinator = new PlaybackCoordinator(), first = player()
+    const listener = vi.fn()
+    const unsubscribe = coordinator.subscribeGate(listener)
+    coordinator.register(0, first)
+    coordinator.setActive(0)
+    coordinator.onStateChange(0, first, 3)
+    expect(listener).toHaveBeenCalledOnce() // Closed -> open.
+    coordinator.onStateChange(0, first, 1) // Still open: no repeat notification.
+    expect(listener).toHaveBeenCalledOnce()
+    coordinator.noteScrollStarted()
+    expect(listener).toHaveBeenCalledTimes(2) // Open -> closed.
+    coordinator.noteScrollStarted() // Already closed: no repeat notification.
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    coordinator.onStateChange(0, first, 1)
+    expect(listener).toHaveBeenCalledTimes(2) // Unsubscribed listeners stay silent.
+    const held = new PlaybackCoordinator(), heldFirst = player()
+    held.setHeld(true)
+    held.register(0, heldFirst); held.setActive(0)
+    held.onStateChange(0, heldFirst, 1) // Preparation hold: playback is vetoed, so no gate.
+    expect(held.isIframeInteractive(0)).toBe(false)
+  })
+})

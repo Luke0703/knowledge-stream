@@ -58,9 +58,56 @@ export class PlaybackCoordinator {
   // the feed already maintains for diagnostics instead of adding a
   // parallel gesture counter.
   private lastCommit: { index: number; episodeAt: number | null } | null = null
+  // Round 9 (2026-11-14): the pointer-events gate. Rounds 6–8 proved the
+  // gesture-end commit never fires on a real iPhone because the swipe's
+  // touch is captured inside the YouTube iframe: pointerup / touchend
+  // never reach the parent document. Round 9 removes the capture at its
+  // source by switching the IFRAME ELEMENT's OWN pointer-events
+  // property — never an overlay above the player (AGENTS.md forbids
+  // invisible touch layers over the player; nothing is layered here,
+  // the iframe itself simply stops taking pointer events):
+  // - 'none' (gate closed) is the default for every card, and is
+  //   re-applied to all cards when a new scroll episode starts, so a
+  //   swipe that begins on a not-yet-playing card delivers its touch
+  //   stream — including the gesture end — to the parent document,
+  //   where the round-6 commit can fire inside the genuine handler.
+  // - 'auto' (gate open) is granted to exactly one card: the settled
+  //   active one, once its player actually reports playing/buffering,
+  //   so YouTube's official UI stays fully usable on the video being
+  //   watched. It closes again on the next scroll start, on pause, on
+  //   an autoplay block, when the active item changes, when the
+  //   document hides, under the preparation hold, and on unregister.
+  // A closed gate after a snap-back reopens at that player's next
+  // playing/buffering state event; until then the outside controls
+  // remain, and closed is the safe default for the next swipe.
+  private gateIndex: number | null = null
+  private gateListeners = new Set<() => void>()
+
+  // Round 9: whether this card's iframe may receive pointer events
+  // (YouTube's official UI). See the gate comment at gateIndex.
+  isIframeInteractive(index: number) { return this.gateIndex === index }
+
+  subscribeGate(listener: () => void) {
+    this.gateListeners.add(listener)
+    return () => { this.gateListeners.delete(listener) }
+  }
+
+  private setGate(index: number | null, reason: string) {
+    if (this.gateIndex === index) return
+    const previous = this.gateIndex
+    this.gateIndex = index
+    // Round 9 diagnostics: every gate switch is recorded, so a device
+    // session can separate "the gate was closed, so the parent could
+    // receive the touch" from "the gate was open (playing video) and
+    // the iframe kept the touch as before".
+    if (previous !== null) diagnosticEvent('pointerGate', { index: previous, interactive: false, reason, msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
+    if (index !== null) diagnosticEvent('pointerGate', { index, interactive: true, reason, msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
+    for (const listener of [...this.gateListeners]) listener()
+  }
 
   setActive(index: number | null) {
     if (this.active === index) return
+    if (index !== this.gateIndex) this.setGate(null, 'active-change')
     // Settling onto the early-attempted item promotes it; if its early
     // attempt already reached playback, the settle reconcile must not
     // re-issue the request. Settling on anything else abandons the
@@ -74,7 +121,7 @@ export class PlaybackCoordinator {
   setVisible(visible: boolean) {
     if (this.visible === visible) return
     this.visible = visible
-    if (!visible) this.clearEarly()
+    if (!visible) { this.clearEarly(); this.setGate(null, 'hidden') }
     this.reconcile()
   }
 
@@ -87,6 +134,7 @@ export class PlaybackCoordinator {
   }
 
   unregister(index: number, player: PlayerControl) {
+    if (this.gateIndex === index) this.setGate(null, 'unregister')
     if (this.players.get(index) === player) this.players.delete(index)
     this.blockedByAutoplay.delete(index)
     this.gestureRetryStamp.delete(index)
@@ -101,7 +149,7 @@ export class PlaybackCoordinator {
   setHeld(held: boolean) {
     if (this.held === held) return
     this.held = held
-    if (held) this.clearEarly()
+    if (held) { this.clearEarly(); this.setGate(null, 'held') }
     this.reconcile()
   }
 
@@ -132,6 +180,22 @@ export class PlaybackCoordinator {
   // issued (round 4's hypothesis lives or dies by that timing).
   noteScrollStarted() {
     this.scrollStartedAt = performance.now()
+    // Round 9: a new scroll episode closes every gate, including the
+    // playing video's, so the swipe's remaining events target the
+    // parent document instead of the iframe under the finger.
+    this.setGate(null, 'scroll-start')
+  }
+
+  // Round 9 diagnostics: the feed reports EVERY gesture-end event it
+  // receives (pointerup / pointercancel / touchend / touchcancel)
+  // before any dedupe, stamped with the timing and activation the
+  // parent held at that moment. Rounds 6–8 could not distinguish "the
+  // event never arrived" from "it arrived but the request was
+  // blocked"; the panel now shows gestureEnd entries directly, and a
+  // session with no gestureEnd at all after a swipe means the touch
+  // stream still never reached the parent.
+  noteGestureEnd(type: string, context: Record<string, unknown> = {}) {
+    diagnosticEvent('gestureEnd', { type, ...context, msSinceGesture: this.msSinceGesture(), msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
   }
 
   private clearEarly() {
@@ -207,6 +271,19 @@ export class PlaybackCoordinator {
   //   setActive(same index) is a no-op — no duplicate request.
   //   If the snap lands elsewhere after all, that setActive clears the
   //   marker and reconcile pauses the committed player again.
+  //
+  // Round 9 (2026-11-14): the gesture-end commit is revived, with its
+  // round-6 failure addressed at the source. The device verdict on
+  // round 6 was that the end events never reached this handler at all
+  // (the iframe kept the touch). The pointer-events gate above now
+  // closes every not-yet-playing card's iframe, so a swipe that starts
+  // on such a card delivers pointerup / touchend to the parent and
+  // this commit can fire inside that genuine handler — the proven
+  // round-3 shape. The settle commit below stays as the second chance
+  // for swipes that begin on the one gate-open (playing) card, whose
+  // first touch the iframe may still keep. Feed-side, every received
+  // end event is also logged (noteGestureEnd) before dedupe, so a
+  // device session can finally separate arrival from acceptance.
   //
   // Round 8 (2026-11-14): the settle commit is authoritative even when
   // the target is ALREADY the active item. The round-7 device session
@@ -305,6 +382,10 @@ export class PlaybackCoordinator {
   // a block with no recent gesture keeps waiting for the next real tap.
   onAutoplayBlocked(index: number) {
     diagnosticEvent('autoplayBlocked', { index, msSinceGesture: this.msSinceGesture(), msSinceScrollStart: this.msSinceScrollStart(), userActivation: userActivationSnapshot() })
+    // Round 9: a blocked card is by definition not playing, so its
+    // gate (if it was somehow open) closes — the next touch on it
+    // belongs to the parent, where a genuine tap can retry.
+    if (this.gateIndex === index) this.setGate(null, 'blocked')
     this.blockedByAutoplay.add(index)
     // A block of the early (mid-scroll) attempt is only recorded here:
     // canPlay is false for it until it settles, and the settle reconcile
@@ -354,7 +435,20 @@ export class PlaybackCoordinator {
       this.gestureRetryStamp.delete(index)
       // The early attempt worked: promotion at settle must not duplicate it.
       if (index === this.earlyIndex) this.earlyPlaying = true
+      // Round 9: the settled active player that is actually playing
+      // (or buffering towards it) earns its iframe back — YouTube's
+      // official UI becomes usable on the watched video. An early
+      // (not yet settled) player does NOT open: it is not settled, and
+      // its iframe must keep passing the swipe's touches to the
+      // parent until the navigation is decided.
+      if (this.canPlay(index)) this.setGate(index, state === 1 ? 'playing' : 'buffering')
     }
+    // A deliberate pause via YouTube's own UI closes the gate again:
+    // the card is no longer playing, so the next touch on it goes to
+    // the parent (the outside 「再生する」 can restart it). ENDED
+    // (state 0) keeps the gate: round 5's loop restarts immediately
+    // and its playing/buffering event re-confirms the gate anyway.
+    if (state === 2 && this.gateIndex === index) this.setGate(null, 'paused')
     // Includes unexpected/manual playback or a late buffering event after navigation.
     // The early-attempted entering player is exempt: starting mid-scroll is its purpose.
     if ((state === 1 || state === 3) && !this.mayPlay(index)) player.pauseVideo()
