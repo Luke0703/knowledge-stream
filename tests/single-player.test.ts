@@ -155,6 +155,77 @@ describe('single-player blocked handling', () => {
   })
 })
 
+describe('single-player gate while paused (round 11)', () => {
+  it('reopens the gate when a scroll episode settles back onto the user-paused video', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // User pause: gate open.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.noteScrollStarted() // Any scroll closes it first.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.noteScrollEpisodeEnd() // Snap-back: no landing change.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+  })
+
+  it('keeps the gate closed for a pause that arrives during an open scroll episode', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.noteScrollStarted()
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('keeps the gate closed in the autoplay-blocked state, even across a pause event', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    now += 10_000 // Outside the gesture window: no window retry.
+    coordinator.onAutoplayBlocked()
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.onStateChange(2) // A trailing pause must not reopen it; 「再生する」 stays the fallback.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    expect(player.playVideo).toHaveBeenCalledOnce() // Only the start tap's start.
+  })
+
+  it('closes the gate when the paused video stops being the active item', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // User pause: gate open.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.setActive(null) // The coordinator pauses it back; nothing is active now.
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('keeps the gate closed when a hidden player pauses', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.setVisible(false) // Closes the gate and pauses.
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('does not reopen the gate at episode end for a video whose start is still in flight', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // User pause on video 1.
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    coordinator.noteScrollEpisodeEnd()
+    // The switched-to video has a start in flight, not a user pause:
+    // the gate stays closed until it reports playing/buffering.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.onStateChange(1)
+    expect(coordinator.isIframeInteractive()).toBe(true)
+  })
+})
+
 describe('single-player playback state', () => {
   it('loops the active video when it ends', () => {
     const { coordinator, player } = setup()
@@ -167,15 +238,17 @@ describe('single-player playback state', () => {
     expect(player.playVideo).toHaveBeenCalledOnce()
   })
 
-  it('opens the gate only while the settled player is playing or buffering', () => {
+  it('opens the gate while the settled player is playing or buffering, and keeps it open across a user pause (round 11 tap-to-toggle)', () => {
     const { coordinator } = setup()
     coordinator.startFromGesture(0)
     expect(coordinator.isIframeInteractive()).toBe(false)
     coordinator.onStateChange(3)
     expect(coordinator.isIframeInteractive()).toBe(true)
-    coordinator.onStateChange(2) // A deliberate pause closes it again.
-    expect(coordinator.isIframeInteractive()).toBe(false)
-    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // A user pause keeps it open: the next tap must reach YouTube's play button.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.onStateChange(1) // That tap resuming playback keeps it open too.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.onStateChange(2)
     expect(coordinator.isIframeInteractive()).toBe(true)
     coordinator.noteScrollStarted() // The next swipe closes it.
     expect(coordinator.isIframeInteractive()).toBe(false)

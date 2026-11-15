@@ -240,8 +240,20 @@ export class SinglePlaybackCoordinator implements FeedCoordinator {
     // claimant; this is the net underneath it): adopt the measured
     // landing now, outside any gesture — it may be blocked, and the
     // usual tap fallback remains.
-    if (pending !== null && pending !== this.displayIndex) this.switchTo(pending, 'settle-commit')
-    else if (pending !== null) this.activeIndex = pending
+    if (pending !== null && pending !== this.displayIndex) { this.switchTo(pending, 'settle-commit'); return }
+    if (pending !== null) this.activeIndex = pending
+    // Round 11: an episode that settles back onto the loaded video
+    // (snap-back, or a scroll that never changed the active item)
+    // closed the gate at scroll start. If that video is the settled
+    // one — playing, or sitting in a user pause (a start still in
+    // flight has startIssuedFor set; a block has blockedIndex set) —
+    // reopen the gate so tap-to-toggle works again without waiting
+    // for a fresh state event.
+    const loaded = this.loadedIndex
+    if (loaded !== null && this.displayIndex === loaded && this.blockedIndex !== loaded && this.canPlay(loaded)
+      && (this.playingIndex === loaded || this.startIssuedFor === null)) {
+      this.setGate(true, this.playingIndex === loaded ? 'episode-end-playing' : 'episode-end-paused')
+    }
   }
 
   // Measure-driven active item. During an open scroll episode this
@@ -338,7 +350,21 @@ export class SinglePlaybackCoordinator implements FeedCoordinator {
     if (state === 2) {
       this.playingIndex = null
       this.startIssuedFor = null
-      if (this.gateOpen) this.setGate(false, 'paused')
+      // Round 11: a pause the USER made on the settled video keeps
+      // the gate open, so the next tap reaches YouTube's own
+      // play/pause toggle (Shorts/TikTok-style tap-to-toggle) instead
+      // of stranding the video behind a closed gate — round 10 closed
+      // the gate on every pause, so only the app's 「再生する」
+      // button could resume. Every coordinator-initiated pause fails
+      // one of the conditions — navigated away or nothing active
+      // (canPlay false), held or hidden, a scroll episode still
+      // open, or the autoplay-blocked state (「再生する」 stays the
+      // fallback there) — and closes the gate exactly as before.
+      if (this.canPlay(index) && this.blockedIndex !== index && !this.episodeOpen) {
+        this.setGate(true, 'user-paused')
+      } else if (this.gateOpen) {
+        this.setGate(false, 'paused')
+      }
     }
     // Playback the coordinator did not authorize (late event after
     // navigating away, hold re-applied): pause it back.

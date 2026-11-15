@@ -92,6 +92,8 @@ it('applies the gate to the single iframe as playback state changes', async () =
   expect(instance.iframe.style.pointerEvents).toBe('none') // Not playing yet.
   act(() => instance.options.events?.onStateChange?.({ target: instance as unknown as YT.Player, data: 1 }))
   expect(instance.iframe.style.pointerEvents).toBe('auto') // Settled + playing: official UI usable.
+  act(() => instance.options.events?.onStateChange?.({ target: instance as unknown as YT.Player, data: 2 }))
+  expect(instance.iframe.style.pointerEvents).toBe('auto') // Round 11: a user pause keeps the official UI reachable for tap-to-resume.
   act(() => coordinator.noteScrollStarted())
   expect(instance.iframe.style.pointerEvents).toBe('none') // The next swipe closes it.
 })
