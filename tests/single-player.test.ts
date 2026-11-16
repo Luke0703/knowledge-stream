@@ -104,6 +104,39 @@ describe('single-player blessing and switching', () => {
   })
 })
 
+describe('single-player start latch (round 12)', () => {
+  // Kazuki's 2026-11-17 device report: the first start press did
+  // nothing and only the second press began playback. The press that
+  // gets lost is the one landing BEFORE the player registers (the
+  // YouTube API + player construction takes real time on a phone), so
+  // the coordinator must latch the start intent from startFromGesture
+  // and fire the start the moment registerPlayer runs — no second tap.
+  it('latches a start tap that lands before registration and fires it at registration', () => {
+    const coordinator = new SinglePlaybackCoordinator()
+    coordinator.setVideos(testVideos)
+    coordinator.setHeld(true)
+    coordinator.startFromGesture(0)
+    expect(coordinator.isReady(0)).toBe(false) // No player yet: nothing could be sent.
+    const player = fakeControl()
+    coordinator.registerPlayer(player as unknown as SinglePlayerControl, 0)
+    // The latched start leaves at registration, sound on first, and
+    // the already-loaded first video is started with playVideo (no
+    // switch needed).
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    expect(player.unMute.mock.invocationCallOrder[0])
+      .toBeLessThan(player.playVideo.mock.invocationCallOrder[0])
+  })
+
+  it('does not double-start when the tap lands after registration', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+})
+
 describe('single-player blocked handling', () => {
   // Drive the coordinator to a blocked landing on video 2 whose
   // gesture window has already expired, so no window retry fires.

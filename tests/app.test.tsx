@@ -31,7 +31,7 @@ afterEach(() => {
   window.history.pushState({}, '', '/')
 })
 
-it('prepares the feed concealed behind the start screen, with the start button disabled until the first player is ready', () => {
+it('prepares the feed concealed behind the start screen, and the start button accepts taps during preparation', () => {
   render(<App />)
   // Round 3: the feed IS mounted from the beginning (so its players can
   // become ready before the decisive tap), but concealed as a separate
@@ -40,8 +40,13 @@ it('prepares the feed concealed behind the start screen, with the start button d
   const host = screen.getByLabelText('動画フィード').closest('.feed-host')
   expect(host?.classList.contains('feed-host--preparing')).toBe(true)
   expect(capturedCoordinator?.isHeld()).toBe(true)
-  const startButton = screen.getByRole('button', { name: /プレーヤーを準備中/ })
-  expect((startButton as HTMLButtonElement).disabled).toBe(true)
+  // Round 12: the button is NOT disabled while the player prepares.
+  // It used to be disabled until the first player was ready, which
+  // discarded the user's first press entirely (a real browser never
+  // delivers a click on a disabled button) and forced the second
+  // press Kazuki reported on device 2026-11-17.
+  const startButton = screen.getByRole('button', { name: /タップして開始/ })
+  expect((startButton as HTMLButtonElement).disabled).toBe(false)
 })
 
 it('sends the first play request synchronously from the decisive tap to the already-ready player', () => {
@@ -70,14 +75,34 @@ it('sends the first play request synchronously from the decisive tap to the alre
   expect(host?.classList.contains('feed-host--started')).toBe(true)
 })
 
-it('lets the user proceed without waiting for readiness, arming the first video instead of stranding them', () => {
+it('fires the latched start at registration when the decisive tap lands during preparation, with no second tap', () => {
   render(<App />)
-  fireEvent.click(screen.getByRole('button', { name: /準備を待たずに表示する/ }))
-  expect(screen.queryByRole('button', { name: /プレーヤーを準備中/ })).toBeNull()
+  // Round 12: the decisive tap lands while the player is still being
+  // constructed. It must be latched — not discarded — and the start
+  // must fire when the player registers, without another tap.
+  fireEvent.click(screen.getByRole('button', { name: /タップして開始/ }))
+  expect(screen.queryByRole('button', { name: /タップして開始/ })).toBeNull()
   expect(capturedCoordinator?.isHeld()).toBe(false)
   expect(capturedCoordinator?.canPlay(0)).toBe(true)
   const host = screen.getByLabelText('動画フィード').closest('.feed-host')
   expect(host?.classList.contains('feed-host--started')).toBe(true)
+  // The mocked feed's part of registration, played by the test: hand
+  // over the video list and register the one player at the first video.
+  const coordinator = capturedCoordinator as SinglePlaybackCoordinator
+  const first = fakePlayer()
+  act(() => { coordinator.setVideos(testVideos); coordinator.registerPlayer(first, 0) })
+  expect(first.unMute).toHaveBeenCalledOnce()
+  expect(first.playVideo).toHaveBeenCalledOnce()
+})
+
+it('does not render the on-screen diagnostics panel even with ?diagnostics=1', () => {
+  // Kazuki's 2026-11-17 request: the diagnostics log strip at the
+  // bottom of the screen goes away for good. The internal event
+  // recording stays; the panel UI must not appear, flag or not.
+  window.history.pushState({}, '', '/?diagnostics=1')
+  render(<App />)
+  expect(screen.queryByTestId('diagnostics-panel')).toBeNull()
+  expect(screen.queryByLabelText('プレーヤー診断ログ')).toBeNull()
 })
 
 it('keeps the per-card core behind ?player=multi as an escape hatch', () => {

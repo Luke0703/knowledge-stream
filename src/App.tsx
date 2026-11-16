@@ -6,8 +6,7 @@ import { SearchView } from './SearchView'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
 import { SinglePlaybackCoordinator } from './player/SinglePlaybackCoordinator'
 import type { FeedCoordinator } from './player/FeedCoordinator'
-import { isDiagnosticsEnabled, startDiagnostics } from './player/diagnostics'
-import { DiagnosticsPanel } from './player/DiagnosticsPanel'
+import { startDiagnostics } from './player/diagnostics'
 
 type Tab = 'videos' | 'search' | 'profile'
 
@@ -38,19 +37,26 @@ export default function App() {
   // display:none, never overlaid on a player — while the coordinator is
   // held, so players are created and cued but no play is requested and
   // no autoplay block is generated. Once the first player reports ready,
-  // the start button enables, and its click handler calls
+  // the start button's click handler calls
   // coordinator.startFromGesture(0) synchronously, sending unMute +
   // playVideo to the already-ready player inside the tap itself.
+  //
+  // Round 12 (2026-11-17): the button used to stay DISABLED until the
+  // first player reported ready. On a real phone the YouTube API +
+  // player construction takes long enough that the user's first press
+  // lands in that window — and a disabled button discards the press
+  // entirely, so only the second press started playback (Kazuki's
+  // device report). The button now accepts the tap at any time:
+  // startFromGesture latches the intent in the coordinator (the
+  // pending switch), and registerPlayer issues the start the moment
+  // the player becomes ready — no second tap, and no muted substitute
+  // start anywhere in the path.
   const [started, setStarted] = useState(false)
-  const [firstReady, setFirstReady] = useState(false)
-  useEffect(() => {
-    const update = () => setFirstReady(coordinator.isReady(0))
-    update()
-    return coordinator.subscribeReady(update)
-  }, [coordinator])
   const begin = () => {
-    // Synchronous inside this click handler: the play request (when the
-    // player is ready) leaves before the feed is even revealed.
+    // Synchronous inside this click handler: when the player is
+    // already ready, the play request leaves before the feed is even
+    // revealed; when it is not, the coordinator's latch fires it at
+    // registration instead.
     coordinator.startFromGesture(0)
     setStarted(true)
   }
@@ -100,9 +106,8 @@ export default function App() {
     <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{playerMode === 'single' && '単一プレーヤー · '}{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
     {tab === 'videos' && !started && <main className="start-screen">
       <p className="start-title">タップして動画をはじめる</p>
-      <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。まず裏でプレーヤーを準備し、準備ができた瞬間のタップから直接再生を始めます。</p>
-      <button className="start-button" disabled={!firstReady} onClick={begin}>{firstReady ? '▶ タップして開始' : 'プレーヤーを準備中…'}</button>
-      {!firstReady && <button className="start-skip" onClick={begin}>準備を待たずに表示する</button>}
+      <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。裏でプレーヤーを準備しているので、準備が終わる前にタップしても、できた瞬間に再生が始まります。</p>
+      <button className="start-button" onClick={begin}>▶ タップして開始</button>
     </main>}
     <div className={tab !== 'videos' ? 'feed-host feed-host--tab-hidden' : started ? 'feed-host feed-host--started' : 'feed-host feed-host--preparing'}>
       <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} playerMode={playerMode} focusExternalVideoId={openRequest?.externalVideoId} focusNonce={openRequest?.nonce} />
@@ -112,7 +117,6 @@ export default function App() {
       <h2>プロフィール（設定）</h2>
       <p>ジャンル選択・保存・端末内データ管理（SPEC 2.5）は今後の実装です。このタブは配置のみで、機能はまだありません。</p>
     </main>}
-    {isDiagnosticsEnabled && <DiagnosticsPanel />}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current={tab === 'videos' ? 'page' : undefined} onClick={() => setTab('videos')}>▶ <span>動画</span></button>
       <button aria-current={tab === 'search' ? 'page' : undefined} onClick={() => setTab('search')}>⌕ <span>検索</span></button>
