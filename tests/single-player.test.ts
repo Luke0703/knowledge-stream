@@ -1,0 +1,302 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SinglePlaybackCoordinator } from '../src/player/SinglePlaybackCoordinator'
+import type { SinglePlayerControl } from '../src/player/SinglePlaybackCoordinator'
+import { testVideos } from '../src/videos'
+
+// Round 10: the single-persistent-player core. The fake control stands
+// in for the one YT.Player; loadVideoById is the switch, playVideo the
+// restart of the already-loaded video.
+const fakeControl = () => ({
+  pauseVideo: vi.fn(), playVideo: vi.fn(), mute: vi.fn(), unMute: vi.fn(),
+  seekTo: vi.fn(), loadVideoById: vi.fn(), cueVideoById: vi.fn(),
+})
+
+let now = 1_000
+beforeEach(() => {
+  now = 1_000
+  vi.spyOn(performance, 'now').mockImplementation(() => now)
+})
+afterEach(() => { vi.restoreAllMocks() })
+
+const setup = () => {
+  const coordinator = new SinglePlaybackCoordinator()
+  coordinator.setVideos(testVideos)
+  const player = fakeControl()
+  coordinator.registerPlayer(player as unknown as SinglePlayerControl, 0)
+  return { coordinator, player }
+}
+
+describe('single-player blessing and switching', () => {
+  it('blesses the one player from the start tap and starts the loaded video', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    expect(coordinator.getDisplayIndex()).toBe(0)
+    expect(coordinator.isReady(0)).toBe(true)
+  })
+
+  it('never starts while held; the start tap fires the armed start', () => {
+    const coordinator = new SinglePlaybackCoordinator()
+    coordinator.setVideos(testVideos)
+    coordinator.setHeld(true)
+    const player = fakeControl()
+    coordinator.registerPlayer(player as unknown as SinglePlayerControl, 0)
+    expect(player.pauseVideo).toHaveBeenCalled()
+    coordinator.setActive(0)
+    coordinator.commitSwipeTarget(1) // Held: commits are inert too.
+    expect(player.playVideo).not.toHaveBeenCalled()
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    coordinator.startFromGesture(0)
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+
+  it('switches via loadVideoById synchronously inside the gesture-end commit', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    player.unMute.mockClear(); player.playVideo.mockClear()
+    coordinator.noteScrollStarted()
+    coordinator.setActive(1) // A measure mid-scroll must not switch the source.
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    coordinator.commitSwipeTarget(1)
+    // Asserted immediately after the synchronous call: the switch left
+    // inside the gesture-end handler, never deferred (memo §A).
+    expect(player.loadVideoById).toHaveBeenCalledOnce()
+    expect(player.loadVideoById).toHaveBeenCalledWith(testVideos[1].externalVideoId)
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.unMute.mock.invocationCallOrder[0])
+      .toBeLessThan(player.loadVideoById.mock.invocationCallOrder[0])
+    expect(coordinator.getDisplayIndex()).toBe(1)
+  })
+
+  it('commits once per episode across gesture end, settle and repeated end events', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    coordinator.commitSwipeTarget(1) // The same gesture's second end event.
+    coordinator.noteScrollEpisodeEnd()
+    coordinator.commitSettleTarget(1) // Settle for the same episode.
+    expect(player.loadVideoById).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce() // Only the start tap's start.
+  })
+
+  it('adopts the measured landing when the episode closes without a commit', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.setActive(2)
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    coordinator.noteScrollEpisodeEnd()
+    expect(player.loadVideoById).toHaveBeenCalledWith(testVideos[2].externalVideoId)
+    expect(coordinator.getDisplayIndex()).toBe(2)
+  })
+
+  it('does not switch when the episode closes on the starting card (snap-back)', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.setActive(0)
+    coordinator.noteScrollEpisodeEnd()
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    expect(coordinator.getDisplayIndex()).toBe(0)
+  })
+})
+
+describe('single-player start latch (round 12)', () => {
+  // Kazuki's 2026-11-17 device report: the first start press did
+  // nothing and only the second press began playback. The press that
+  // gets lost is the one landing BEFORE the player registers (the
+  // YouTube API + player construction takes real time on a phone), so
+  // the coordinator must latch the start intent from startFromGesture
+  // and fire the start the moment registerPlayer runs — no second tap.
+  it('latches a start tap that lands before registration and fires it at registration', () => {
+    const coordinator = new SinglePlaybackCoordinator()
+    coordinator.setVideos(testVideos)
+    coordinator.setHeld(true)
+    coordinator.startFromGesture(0)
+    expect(coordinator.isReady(0)).toBe(false) // No player yet: nothing could be sent.
+    const player = fakeControl()
+    coordinator.registerPlayer(player as unknown as SinglePlayerControl, 0)
+    // The latched start leaves at registration, sound on first, and
+    // the already-loaded first video is started with playVideo (no
+    // switch needed).
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+    expect(player.loadVideoById).not.toHaveBeenCalled()
+    expect(player.unMute.mock.invocationCallOrder[0])
+      .toBeLessThan(player.playVideo.mock.invocationCallOrder[0])
+  })
+
+  it('does not double-start when the tap lands after registration', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+})
+
+describe('single-player blocked handling', () => {
+  // Drive the coordinator to a blocked landing on video 2 whose
+  // gesture window has already expired, so no window retry fires.
+  const blockedLanding = () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    now += 10_000
+    coordinator.onAutoplayBlocked()
+    return { coordinator, player }
+  }
+
+  it('retries a blocked landing at settle, restarting the loaded video (round 8 authority)', () => {
+    const { coordinator, player } = blockedLanding()
+    player.unMute.mockClear(); player.playVideo.mockClear()
+    coordinator.commitSettleTarget(1)
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+    expect(player.loadVideoById).toHaveBeenCalledOnce() // The original switch only.
+  })
+
+  it('retries a block that lands inside the gesture window exactly once', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    player.playVideo.mockClear()
+    coordinator.onAutoplayBlocked() // Same gesture stamp: inside the window.
+    expect(player.playVideo).toHaveBeenCalledOnce()
+    coordinator.onAutoplayBlocked() // The retry spent this gesture's one try.
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the tap fallback: play() retries only the active loaded video', () => {
+    const { coordinator, player } = blockedLanding()
+    player.playVideo.mockClear()
+    coordinator.play(0) // Not the active item.
+    expect(player.playVideo).not.toHaveBeenCalled()
+    coordinator.play(1)
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+
+  it('retries a blocked active video on the next genuine gesture', () => {
+    const { coordinator, player } = blockedLanding()
+    player.playVideo.mockClear()
+    coordinator.handleUserGesture()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+})
+
+describe('single-player gate while paused (round 11)', () => {
+  it('reopens the gate when a scroll episode settles back onto the user-paused video', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // User pause: gate open.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.noteScrollStarted() // Any scroll closes it first.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.noteScrollEpisodeEnd() // Snap-back: no landing change.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+  })
+
+  it('keeps the gate closed for a pause that arrives during an open scroll episode', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.noteScrollStarted()
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('keeps the gate closed in the autoplay-blocked state, even across a pause event', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    now += 10_000 // Outside the gesture window: no window retry.
+    coordinator.onAutoplayBlocked()
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.onStateChange(2) // A trailing pause must not reopen it; 「再生する」 stays the fallback.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    expect(player.playVideo).toHaveBeenCalledOnce() // Only the start tap's start.
+  })
+
+  it('closes the gate when the paused video stops being the active item', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // User pause: gate open.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.setActive(null) // The coordinator pauses it back; nothing is active now.
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('keeps the gate closed when a hidden player pauses', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.setVisible(false) // Closes the gate and pauses.
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('does not reopen the gate at episode end for a video whose start is still in flight', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    coordinator.onStateChange(2) // User pause on video 1.
+    coordinator.noteScrollStarted()
+    coordinator.commitSwipeTarget(1)
+    coordinator.noteScrollEpisodeEnd()
+    // The switched-to video has a start in flight, not a user pause:
+    // the gate stays closed until it reports playing/buffering.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.onStateChange(1)
+    expect(coordinator.isIframeInteractive()).toBe(true)
+  })
+})
+
+describe('single-player playback state', () => {
+  it('loops the active video when it ends', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    player.seekTo.mockClear(); player.playVideo.mockClear(); player.unMute.mockClear()
+    coordinator.onStateChange(0)
+    expect(player.seekTo).toHaveBeenCalledWith(0, true)
+    expect(player.unMute).toHaveBeenCalledOnce()
+    expect(player.playVideo).toHaveBeenCalledOnce()
+  })
+
+  it('opens the gate while the settled player is playing or buffering, and keeps it open across a user pause (round 11 tap-to-toggle)', () => {
+    const { coordinator } = setup()
+    coordinator.startFromGesture(0)
+    expect(coordinator.isIframeInteractive()).toBe(false)
+    coordinator.onStateChange(3)
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.onStateChange(2) // A user pause keeps it open: the next tap must reach YouTube's play button.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.onStateChange(1) // That tap resuming playback keeps it open too.
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.onStateChange(2)
+    expect(coordinator.isIframeInteractive()).toBe(true)
+    coordinator.noteScrollStarted() // The next swipe closes it.
+    expect(coordinator.isIframeInteractive()).toBe(false)
+  })
+
+  it('pauses on hide and on setActive(null), and never restarts a superseded start', () => {
+    const { coordinator, player } = setup()
+    coordinator.startFromGesture(0)
+    coordinator.onStateChange(1)
+    player.pauseVideo.mockClear(); player.playVideo.mockClear()
+    coordinator.setActive(0) // Same item measured again: no restart.
+    expect(player.playVideo).not.toHaveBeenCalled()
+    coordinator.setVisible(false)
+    expect(player.pauseVideo).toHaveBeenCalledOnce()
+    coordinator.setActive(null)
+    expect(player.pauseVideo).toHaveBeenCalledTimes(2)
+  })
+})
