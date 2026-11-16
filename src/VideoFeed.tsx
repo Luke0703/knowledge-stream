@@ -8,7 +8,15 @@ import { SingleYouTubePlayer } from './player/SingleYouTubePlayer'
 import type { TestVideo } from './videos'
 import { countPlayerWork, diagnosticEvent } from './player/diagnostics'
 
-export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp, playerMode = 'multi' }: { videos: TestVideo[]; preloadAdjacent?: boolean; coordinator?: FeedCoordinator; playerMode?: 'multi' | 'single' }) {
+export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp, playerMode = 'single', focusExternalVideoId, focusNonce }: {
+  videos: TestVideo[]
+  preloadAdjacent?: boolean
+  coordinator?: FeedCoordinator
+  playerMode?: 'multi' | 'single'
+  /** When set (with a fresh focusNonce), move the feed to this video. */
+  focusExternalVideoId?: string
+  focusNonce?: number
+}) {
   const viewport = useRef<HTMLDivElement>(null)
   const measureNow = useRef<(() => void) | null>(null)
   // App passes its coordinator so the start tap (stamped before the feed
@@ -16,11 +24,13 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
   // use (tests) falls back to an internal one.
   const [ownCoordinator] = useState(() => new PlaybackCoordinator())
   const coordinator = coordinatorProp ?? ownCoordinator
-  // Round 10 (?player=single): one persistent player for the whole
-  // feed. Single mode is only real when the matching coordinator core
-  // was passed; the scroll/gesture/settle machinery below is shared
-  // unchanged, and the commits land on the single-player core, whose
-  // switch is issued synchronously inside the same handlers.
+  // Round 10: one persistent player for the whole feed (the default
+  // core since the 2026-11-16 integration; ?player=multi restores the
+  // per-card core). Single mode is only real when the matching
+  // coordinator core was passed; the scroll/gesture/settle machinery
+  // below is shared unchanged, and the commits land on the
+  // single-player core, whose switch is issued synchronously inside
+  // the same handlers.
   const singleCoordinator = coordinator instanceof SinglePlaybackCoordinator ? coordinator : null
   const single = playerMode === 'single' && singleCoordinator !== null
   const [active, setActive] = useState<number | null>(null)
@@ -311,6 +321,24 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // issue the switch explicitly — still inside this click handler.
     if (single) coordinator.commitSettleTarget(index)
   }
+
+  // Search results open a video here by its YouTube external id
+  // (feature/search-spec, integrated 2026-11-16). The external id is
+  // resolved to the feed index and routed through navigate() — the
+  // feed's existing move path — so in single-player mode the switch
+  // goes through the coordinator's settle commit on the ONE player
+  // instead of the old per-card scroll assumptions. A video that is
+  // not part of this feed list simply leaves the feed where it is.
+  const handledFocusNonce = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!focusExternalVideoId || focusNonce === undefined) return
+    if (handledFocusNonce.current === focusNonce) return
+    handledFocusNonce.current = focusNonce
+    const index = videos.findIndex(video => video.externalVideoId === focusExternalVideoId)
+    if (index >= 0) navigate(index)
+    // navigate is recreated per render; the nonce guard above is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusExternalVideoId, focusNonce, videos])
 
   if (!videos.length) return <main className="empty-state">テスト動画がありません。動画データを確認してください。</main>
 

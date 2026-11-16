@@ -1,11 +1,12 @@
 // The playback surface App and VideoFeed rely on, whichever playback
 // core is active. Two implementations exist:
-// - PlaybackCoordinator (default): one YT.Player per card, retained in
-//   a mount window — the rounds 1–9 architecture.
-// - SinglePlaybackCoordinator (?player=single, round 10): ONE
+// - SinglePlaybackCoordinator (DEFAULT since 2026-11-16): ONE
 //   persistent YT.Player for the whole feed, switched with
 //   loadVideoById, per the WebKit per-element autoplay grant (see
-//   ks-round10/research-memo.md).
+//   ks-round10/research-memo.md). Rounds 10/11 passed their device
+//   checks, so this is the core a plain URL gets.
+// - PlaybackCoordinator (?player=multi escape hatch): one YT.Player
+//   per card, retained in a mount window — the rounds 1–9 architecture.
 // The feed's scroll/gesture/settle machinery is shared; only the core
 // behind this interface changes, so a device session can A/B the two
 // architectures on one preview deploy.

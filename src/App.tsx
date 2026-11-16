@@ -1,20 +1,25 @@
 import { useEffect, useState } from 'react'
-import type { HealthResponse } from '../shared/api'
+import type { HealthResponse, SearchVideoDto } from '../shared/api'
 import { testVideos } from './videos'
 import { VideoFeed } from './VideoFeed'
+import { SearchView } from './SearchView'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
 import { SinglePlaybackCoordinator } from './player/SinglePlaybackCoordinator'
 import type { FeedCoordinator } from './player/FeedCoordinator'
 import { isDiagnosticsEnabled, startDiagnostics } from './player/diagnostics'
 import { DiagnosticsPanel } from './player/DiagnosticsPanel'
 
+type Tab = 'videos' | 'search' | 'profile'
+
 export default function App() {
   useEffect(startDiagnostics, [])
-  // Round 10 A/B flag: ?player=single selects the single-persistent-
-  // player core; anything else keeps the per-card core as the default,
-  // so one preview deploy serves both modes for device comparison.
+  // Player core selection (round 10 A/B, resolved 2026-11-16): the
+  // single-persistent-player core is the DEFAULT — rounds 10/11 passed
+  // their iPhone device checks (swipe landings play with sound; one tap
+  // toggles play/pause). ?player=multi remains as the escape hatch back
+  // to the per-card core (rounds 1–9 architecture) on the same deploy.
   const [playerMode] = useState<'multi' | 'single'>(() =>
-    new URLSearchParams(window.location.search).get('player') === 'single' ? 'single' : 'multi')
+    new URLSearchParams(window.location.search).get('player') === 'multi' ? 'multi' : 'single')
   // The coordinator lives here, not in the feed, so App can hold playback
   // during preparation and release it from the decisive start tap.
   const [coordinator] = useState<FeedCoordinator>(() => {
@@ -52,6 +57,10 @@ export default function App() {
   // Opt-in comparison for the iPhone slowdown investigation; no saved setting.
   const [preloadAdjacent] = useState(() => new URLSearchParams(window.location.search).get('preload') !== 'off')
   const [apiStatus, setApiStatus] = useState('API 接続中')
+  const [tab, setTab] = useState<Tab>('videos')
+  // A search result tap asks the feed to open that video (matched by the
+  // YouTube external id). The nonce retriggers the request for repeat taps.
+  const [openRequest, setOpenRequest] = useState<{ externalVideoId: string; nonce: number } | null>(null)
   useEffect(() => {
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 8_000)
@@ -65,22 +74,49 @@ export default function App() {
     return () => { mounted = false; clearTimeout(timeout); controller.abort() }
   }, [])
 
+  // Leaving the video tab pauses the current video (the feed stays
+  // mounted and concealed — the single player must never unmount);
+  // returning lets the feed's own measurement resume the settled item.
+  useEffect(() => {
+    if (tab !== 'videos') coordinator.setActive(null)
+  }, [tab, coordinator])
+
+  const openVideo = (video: SearchVideoDto) => {
+    const index = testVideos.findIndex(item => item.externalVideoId === video.externalVideoId)
+    if (!started && index >= 0) {
+      // The result tap is itself a genuine gesture: when playback has
+      // not started yet, treat it as the decisive start tap for that
+      // video — synchronously inside this handler, exactly like the
+      // start button does for the first video. A result that is not in
+      // the feed only switches tabs (the search branch's behaviour).
+      coordinator.startFromGesture(index)
+      setStarted(true)
+    }
+    setOpenRequest({ externalVideoId: video.externalVideoId, nonce: Date.now() })
+    setTab('videos')
+  }
+
   return <div className="app-shell">
     <header className="app-header"><div><p className="eyebrow">SHORTS SPIKE · PHASE 1.5</p><h1>Knowledge Stream<span> / 知るを、つなぐ。</span></h1></div><span className="api-status">{playerMode === 'single' && '単一プレーヤー · '}{!preloadAdjacent && '先読みオフ · '}{apiStatus}</span></header>
-    {!started && <main className="start-screen">
+    {tab === 'videos' && !started && <main className="start-screen">
       <p className="start-title">タップして動画をはじめる</p>
       <p>ブラウザの仕組み上、音声つきの再生には最初のタップが必要です。まず裏でプレーヤーを準備し、準備ができた瞬間のタップから直接再生を始めます。</p>
       <button className="start-button" disabled={!firstReady} onClick={begin}>{firstReady ? '▶ タップして開始' : 'プレーヤーを準備中…'}</button>
       {!firstReady && <button className="start-skip" onClick={begin}>準備を待たずに表示する</button>}
     </main>}
-    <div className={started ? 'feed-host feed-host--started' : 'feed-host feed-host--preparing'}>
-      <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} playerMode={playerMode} />
+    <div className={tab !== 'videos' ? 'feed-host feed-host--tab-hidden' : started ? 'feed-host feed-host--started' : 'feed-host feed-host--preparing'}>
+      <VideoFeed videos={testVideos} preloadAdjacent={preloadAdjacent} coordinator={coordinator} playerMode={playerMode} focusExternalVideoId={openRequest?.externalVideoId} focusNonce={openRequest?.nonce} />
     </div>
+    {tab === 'search' && <SearchView onOpenVideo={openVideo} />}
+    {tab === 'profile' && <main className="profile-placeholder" aria-label="プロフィール（設定）">
+      <h2>プロフィール（設定）</h2>
+      <p>ジャンル選択・保存・端末内データ管理（SPEC 2.5）は今後の実装です。このタブは配置のみで、機能はまだありません。</p>
+    </main>}
     {isDiagnosticsEnabled && <DiagnosticsPanel />}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
-      <button aria-current="page">▶ <span>動画</span></button>
-      <button disabled>⌕ <span>検索</span><small>準備中</small></button>
-      <button disabled>◎ <span>プロフィール</span><small>準備中</small></button>
+      <button aria-current={tab === 'videos' ? 'page' : undefined} onClick={() => setTab('videos')}>▶ <span>動画</span></button>
+      <button aria-current={tab === 'search' ? 'page' : undefined} onClick={() => setTab('search')}>⌕ <span>検索</span></button>
+      <button aria-current={tab === 'profile' ? 'page' : undefined} onClick={() => setTab('profile')}>◎ <span>プロフィール</span></button>
     </nav>
   </div>
 }
