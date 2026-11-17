@@ -1,3 +1,4 @@
+import type { FeedbackType } from '../shared/api'
 import { useEffect, useRef, useState } from 'react'
 import { PlaybackCoordinator } from './player/PlaybackCoordinator'
 import { SinglePlaybackCoordinator } from './player/SinglePlaybackCoordinator'
@@ -5,17 +6,25 @@ import type { FeedCoordinator } from './player/FeedCoordinator'
 import { decideSwipeTarget, EARLY_PLAY_THRESHOLD, inMountWindow, retainedPlayers, selectActive, SWIPE_PROJECTION_MS, visibleRatio } from './player/visibility'
 import { YouTubePlayer } from './player/YouTubePlayer'
 import { SingleYouTubePlayer } from './player/SingleYouTubePlayer'
-import type { TestVideo } from './videos'
+import type { FeedVideo } from './feed/model'
 import { countPlayerWork, diagnosticEvent } from './player/diagnostics'
 
-export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp, playerMode = 'single', focusExternalVideoId, focusNonce }: {
-  videos: TestVideo[]
+export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordinatorProp, playerMode = 'single', focusExternalVideoId, focusNonce, onActiveVideo, savedVideoIds, onToggleSaved, onNotInterested, feedbackSent, onFeedback }: {
+  videos: FeedVideo[]
   preloadAdjacent?: boolean
   coordinator?: FeedCoordinator
   playerMode?: 'multi' | 'single'
   /** When set (with a fresh focusNonce), move the feed to this video. */
   focusExternalVideoId?: string
   focusNonce?: number
+  /** Called when a new video becomes the settled active item (SPEC section 3: viewed = became active). */
+  onActiveVideo?: (videoId: string) => void
+  /** Ids of videos the user saved on this device; drives the 保存 button state. */
+  savedVideoIds?: ReadonlySet<string>
+  onToggleSaved?: (video: FeedVideo) => void
+  feedbackSent?: { helpful: ReadonlySet<string>; wrongCategory: ReadonlySet<string> }
+  onFeedback?: (video: FeedVideo, feedbackType: FeedbackType) => void
+  onNotInterested?: (video: FeedVideo) => void
 }) {
   const viewport = useRef<HTMLDivElement>(null)
   const measureNow = useRef<(() => void) | null>(null)
@@ -34,6 +43,15 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
   const singleCoordinator = coordinator instanceof SinglePlaybackCoordinator ? coordinator : null
   const single = playerMode === 'single' && singleCoordinator !== null
   const [active, setActive] = useState<number | null>(null)
+  const lastReported = useRef<{ videos: FeedVideo[]; id?: string }>({ videos })
+  useEffect(() => {
+    if (lastReported.current.videos !== videos) lastReported.current = { videos }
+    const video = active === null ? undefined : videos[active]
+    if (video && video.id !== lastReported.current.id) {
+      onActiveVideo?.(video.id)
+      lastReported.current.id = video.id
+    }
+  }, [active, videos, onActiveVideo])
   const [center, setCenter] = useState(0)
   const [previousPlayers, setPreviousPlayers] = useState<number[]>([])
   const mounted = retainedPlayers(center, videos.length, previousPlayers, preloadAdjacent)
@@ -340,13 +358,16 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusExternalVideoId, focusNonce, videos])
 
-  if (!videos.length) return <main className="empty-state">テスト動画がありません。動画データを確認してください。</main>
+  const currentIndex = videos.length ? Math.min(center, videos.length - 1) : 0
+  const currentVideo = videos[currentIndex]
+
+  if (!videos.length) return <main className="empty-state">表示できる動画がありません。</main>
 
   return <>
     <main className="feed" ref={viewport} aria-label="動画フィード" tabIndex={0}>
       {videos.map((video, index) => <article key={video.id} className="video-card" aria-label={`${index + 1}本目: ${video.label}`} data-active={active === index}>
         <div className="video-meta">
-          <span className="eyebrow">{video.category} <span> / {String(index + 1).padStart(2, '0')} · 独自ラベル</span></span>
+          <span className="eyebrow">{video.categories.join(' / ')} <span> / {String(index + 1).padStart(2, '0')} · 独自ラベル</span></span>
           <h2>{video.label}</h2>
         </div>
         <div className="player-slot">
@@ -361,9 +382,17 @@ export function VideoFeed({ videos, preloadAdjacent = true, coordinator: coordin
     </main>
     <section className="feed-controls" aria-label="動画の切り替え">
       <div><button onClick={() => navigate(center - 1)} disabled={center === 0}>↑ 前へ</button>
-        <div className="current-video"><span aria-live="polite">{center + 1} / {videos.length}</span>
-          <a className="youtube-link" href={`https://www.youtube.com/watch?v=${videos[center].externalVideoId}`} target="_blank" rel="noreferrer">{videos[center].label} ↗</a></div>
+        <div className="current-video"><span aria-live="polite">{currentIndex + 1} / {videos.length}</span>
+          <a className="youtube-link" href={`https://www.youtube.com/watch?v=${currentVideo.externalVideoId}`} target="_blank" rel="noreferrer">{currentVideo.label} ↗</a></div>
         <button onClick={() => navigate(center + 1)} disabled={center === videos.length - 1}>次へ ↓</button></div>
+      {(onToggleSaved || onNotInterested || onFeedback) && <div className="feed-actions">
+        {onToggleSaved && currentVideo && <button aria-pressed={savedVideoIds?.has(currentVideo.id) ?? false} onClick={() => onToggleSaved(currentVideo)}>{(savedVideoIds?.has(currentVideo.id) ?? false) ? '保存済み' : '保存'}</button>}
+        {onNotInterested && currentVideo && <button onClick={() => onNotInterested(currentVideo)}>興味なし</button>}
+        {onFeedback && currentVideo && <>
+          <button aria-pressed={feedbackSent?.helpful.has(currentVideo.id) ?? false} disabled={feedbackSent?.helpful.has(currentVideo.id) ?? false} onClick={() => onFeedback(currentVideo, 'helpful')}>{feedbackSent?.helpful.has(currentVideo.id) ? '役立った ✓' : '役立った'}</button>
+          <button aria-pressed={feedbackSent?.wrongCategory.has(currentVideo.id) ?? false} disabled={feedbackSent?.wrongCategory.has(currentVideo.id) ?? false} onClick={() => onFeedback(currentVideo, 'wrong_category')}>{feedbackSent?.wrongCategory.has(currentVideo.id) ? '分類が違う ✓' : '分類が違う'}</button>
+        </>}
+      </div>}
     </section>
   </>
 }

@@ -1,6 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import AdminApp from './admin/AdminApp'
 import './styles.css'
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
+const RootApp = window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/') ? AdminApp : App
+
+createRoot(document.getElementById('root')!).render(<StrictMode><RootApp /></StrictMode>)

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import type { TestVideo } from '../videos'
+import type { FeedVideo } from '../feed/model'
 import type { PlaybackCoordinator, PlayerControl } from './PlaybackCoordinator'
 import { loadYouTubeApi } from './youtubeApi'
 import { countPlayerWork } from './diagnostics'
@@ -16,7 +16,7 @@ export function errorMessage(code: number): string {
 }
 
 export function YouTubePlayer({ video, index, coordinator, load = true }: {
-  video: TestVideo; index: number; coordinator: PlaybackCoordinator; load?: boolean
+  video: FeedVideo; index: number; coordinator: PlaybackCoordinator; load?: boolean
 }) {
   const host = useRef<HTMLDivElement>(null)
   const [attempt, setAttempt] = useState(0)

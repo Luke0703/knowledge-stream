@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from '../src/App'
+import { emptyClientState, loadClientState, saveClientState } from '../src/state/clientState'
 import { testVideos } from '../src/videos'
 import type { FeedCoordinator } from '../src/player/FeedCoordinator'
 import { PlaybackCoordinator } from '../src/player/PlaybackCoordinator'
@@ -19,11 +20,18 @@ const fakePlayer = () => ({
   loadVideoById: vi.fn(), cueVideoById: vi.fn(),
 })
 
+const categories = [{ id: 'cat-math', name: '数学' }, { id: 'cat-mono', name: 'ものづくり' }, { id: 'cat-phys', name: '物理' }]
+const fetchResponse = (url: string) => ({
+  ok: true,
+  json: async () => url.startsWith('/api/v1/categories') ? { categories }
+    : url.startsWith('/api/v1/feed') ? { categories: [], limit: 50, results: testVideos.map(video => ({ ...video, platform: 'youtube' })) }
+    : { ok: true, phase: 1 },
+})
 beforeEach(() => {
   capturedCoordinator = undefined
-  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
-    ok: true, json: () => Promise.resolve({ ok: true, phase: 1 }),
-  })))
+  window.localStorage.clear()
+  saveClientState({ ...emptyClientState(), selectedCategoryIds: ['cat-math', 'cat-mono', 'cat-phys'] })
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(fetchResponse(url))))
 })
 afterEach(() => {
   cleanup()
@@ -31,8 +39,9 @@ afterEach(() => {
   window.history.pushState({}, '', '/')
 })
 
-it('prepares the feed concealed behind the start screen, and the start button accepts taps during preparation', () => {
+it('prepares the feed concealed behind the start screen, and the start button accepts taps during preparation', async () => {
   render(<App />)
+  await screen.findByRole('button', { name: /タップして開始/ })
   // Round 3: the feed IS mounted from the beginning (so its players can
   // become ready before the decisive tap), but concealed as a separate
   // screen — the host carries the preparing class (display:none in CSS),
@@ -49,8 +58,9 @@ it('prepares the feed concealed behind the start screen, and the start button ac
   expect((startButton as HTMLButtonElement).disabled).toBe(false)
 })
 
-it('sends the first play request synchronously from the decisive tap to the already-ready player', () => {
+it('sends the first play request synchronously from the decisive tap to the already-ready player', async () => {
   render(<App />)
+  await screen.findByRole('button', { name: /タップして開始/ })
   // Since 2026-11-16 the default core is the single persistent player;
   // the mocked feed's part of registration is played by the test: hand
   // over the video list (VideoFeed calls setVideos on mount) and
@@ -75,8 +85,9 @@ it('sends the first play request synchronously from the decisive tap to the alre
   expect(host?.classList.contains('feed-host--started')).toBe(true)
 })
 
-it('fires the latched start at registration when the decisive tap lands during preparation, with no second tap', () => {
+it('fires the latched start at registration when the decisive tap lands during preparation, with no second tap', async () => {
   render(<App />)
+  await screen.findByRole('button', { name: /タップして開始/ })
   // Round 12: the decisive tap lands while the player is still being
   // constructed. It must be latched — not discarded — and the start
   // must fire when the player registers, without another tap.
@@ -95,19 +106,44 @@ it('fires the latched start at registration when the decisive tap lands during p
   expect(first.playVideo).toHaveBeenCalledOnce()
 })
 
-it('does not render the on-screen diagnostics panel even with ?diagnostics=1', () => {
+it('does not render the on-screen diagnostics panel even with ?diagnostics=1', async () => {
   // Kazuki's 2026-11-17 request: the diagnostics log strip at the
   // bottom of the screen goes away for good. The internal event
   // recording stays; the panel UI must not appear, flag or not.
   window.history.pushState({}, '', '/?diagnostics=1')
   render(<App />)
+  await screen.findByRole('button', { name: /タップして開始/ })
   expect(screen.queryByTestId('diagnostics-panel')).toBeNull()
   expect(screen.queryByLabelText('プレーヤー診断ログ')).toBeNull()
 })
 
-it('keeps the per-card core behind ?player=multi as an escape hatch', () => {
+it('keeps the per-card core behind ?player=multi as an escape hatch', async () => {
   window.history.pushState({}, '', '/?player=multi')
   render(<App />)
+  await screen.findByRole('button', { name: /タップして開始/ })
   expect(capturedCoordinator).toBeInstanceOf(PlaybackCoordinator)
   expect(capturedCoordinator).not.toBeInstanceOf(SinglePlaybackCoordinator)
+})
+
+it('requires a first-run genre and persists the selection before preparing the feed', async () => {
+  window.localStorage.clear()
+  render(<App />)
+  await screen.findByRole('heading', { name: 'ジャンルを選んでください' })
+  expect(screen.queryByRole('button', { name: /タップして開始/ })).toBeNull()
+  const submit = screen.getByRole('button', { name: 'このジャンルではじめる' })
+  expect((submit as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('checkbox', { name: '数学' }))
+  expect((submit as HTMLButtonElement).disabled).toBe(false)
+  fireEvent.click(submit)
+  await screen.findByRole('button', { name: /タップして開始/ })
+  expect(loadClientState().selectedCategoryIds).toEqual(['cat-math'])
+})
+
+it('retries a failed feed request', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string) => url.startsWith('/api/v1/feed') ? Promise.reject(new Error('offline')) : Promise.resolve(fetchResponse(url))))
+  render(<App />)
+  await screen.findByText('動画の読み込みに失敗しました')
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(fetchResponse(url))))
+  fireEvent.click(screen.getByRole('button', { name: '再試行' }))
+  await screen.findByRole('button', { name: /タップして開始/ })
 })

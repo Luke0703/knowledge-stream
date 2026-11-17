@@ -1,5 +1,5 @@
 import { countPlayerWork, diagnosticEvent, userActivationSnapshot } from './diagnostics'
-import type { TestVideo } from '../videos'
+import type { FeedVideo } from '../feed/model'
 import type { FeedCoordinator } from './FeedCoordinator'
 
 // The control surface of the ONE persistent player. loadVideoById is
@@ -37,7 +37,7 @@ type SwitchReason = 'start-gesture' | 'touchend-commit' | 'settle-commit' | 'exp
 // reaches the parent, and the settled playing video keeps YouTube's
 // official UI.
 export class SinglePlaybackCoordinator implements FeedCoordinator {
-  private videos: readonly TestVideo[] = []
+  private videos: readonly FeedVideo[] = []
   private player: SinglePlayerControl | null = null
   // The index whose video the player currently holds (cued or loaded).
   private loadedIndex: number | null = null
@@ -76,7 +76,7 @@ export class SinglePlaybackCoordinator implements FeedCoordinator {
   private gateOpen = false
   private gateListeners = new Set<() => void>()
 
-  setVideos(videos: readonly TestVideo[]) { this.videos = videos }
+  setVideos(videos: readonly FeedVideo[]) { this.videos = videos }
 
   // ---- registration (called by SingleYouTubePlayer) ----
 

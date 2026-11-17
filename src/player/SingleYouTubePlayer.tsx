@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { TestVideo } from '../videos'
+import type { FeedVideo } from '../feed/model'
 import type { SinglePlaybackCoordinator, SinglePlayerControl } from './SinglePlaybackCoordinator'
 import { loadYouTubeApi } from './youtubeApi'
 import { errorMessage } from './YouTubePlayer'
@@ -20,7 +20,7 @@ import { countPlayerWork } from './diagnostics'
 // gate switches the iframe element's OWN pointer-events property,
 // exactly like the per-card players (round 9).
 export function SingleYouTubePlayer({ videos, coordinator }: {
-  videos: TestVideo[]; coordinator: SinglePlaybackCoordinator
+  videos: FeedVideo[]; coordinator: SinglePlaybackCoordinator
 }) {
   const host = useRef<HTMLDivElement>(null)
   const [attempt, setAttempt] = useState(0)

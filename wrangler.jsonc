@@ -1,5 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // Top level = local development only (AGENTS.md: local / staging /
+  // production DBs stay separated; never develop against production).
+  // The zero id is intentional: `wrangler dev --local` uses on-disk D1
+  // storage, and a remote call against the top level fails instead of
+  // touching a real database. Deploy with an explicit environment:
+  //   wrangler deploy --env staging | --env production
   "name": "knowledge-stream",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
@@ -10,9 +16,33 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "knowledge-stream",
+      "database_name": "knowledge-stream-local",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    "staging": {
+      "name": "knowledge-stream-staging",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "knowledge-stream-staging",
+          "database_id": "2c7c38e8-d350-443c-b8f0-7077de0a3649",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "production": {
+      "name": "knowledge-stream",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "knowledge-stream",
+          "database_id": "12ac0b95-a836-450d-b0ae-d73b3b0dfe7a",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }
